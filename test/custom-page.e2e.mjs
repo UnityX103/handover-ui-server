@@ -25,7 +25,8 @@ const run = async (argv, env = environment, project = root) => {
   catch (error) { throw new Error(`${argv[0]} failed: ${error.stdout || error.message}`); }
 };
 const { chromium } = await import(process.env.PLAYWRIGHT_PKG || 'playwright');
-const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
+// Use full Chromium new headless: headless-shell lacks the service-worker BadgeService binder.
+const browser = await chromium.launch({ channel: 'chromium', executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
 const page = await context.newPage(), errors = [];
 let downloads = 0;

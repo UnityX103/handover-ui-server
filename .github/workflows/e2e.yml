@@ -25,3 +25,6 @@ jobs:
       - run: node test/manual-visual.e2e.mjs
       - run: node test/listener.e2e.mjs
       - run: node test/remote.e2e.mjs
+        env:
+          # Keep renderer stderr for native crashes; no retries or weakened assertions.
+          DEBUG: pw:browser
