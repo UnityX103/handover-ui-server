@@ -96,7 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
       handoverReturnWhenAcknowledged({cancellation:result.cancellation});
     } catch (error) { cancel.disabled = false; receipt.hidden = false; receipt.textContent = error.message; }
   };
-  document.querySelector('header').append(cancel);
+  document.querySelector('footer').append(cancel);
   if (S?.finished) cancel.disabled = true;
   handoverReturnWhenAcknowledged(S);
   if (sessionStorage.getItem('handover:return:' + handoverScope)) {

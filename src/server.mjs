@@ -133,7 +133,7 @@ export function createHandoverServer(options = {}) {
       html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
     }
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
-    html = html.replace('<header>', '<header><a class="home-link" href="' + ('/?username=' + encodeURIComponent(r.username)) + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
+    html = html.replace('<header>', '<header><a class="home-link" aria-label="返回列表" title="返回列表" href="' + ('/?username=' + encodeURIComponent(r.username)) + '"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
     html = html.replace('<button class="primary" id="send" type="button" disabled>Send to Agent</button>', '<button class="primary" id="send" type="button" disabled>发送给 Agent</button>');
     html = html.replace('<input type="checkbox" id="use-subagent" checked>', '<input type="checkbox" id="use-subagent">').replace('subagent: true', 'subagent: false');
     const labels = [

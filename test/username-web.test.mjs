@@ -113,12 +113,18 @@ test('custom page scopes metadata, iframe, persisted replies and return URL', as
   assert.equal(nodes.get('header a').href,'/?username=Xpy');
 });
 
-test('question logout cancellation retains session and drafts; confirmation exits', async () => {
+test('question header has no account switch while identity changes still gate the page', () => {
   const code=fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8');
-  const storage=new Map([['handover:username','Xpy']]),draft=new Map([['draft','keep']]),destinations=[];let button,confirmed=false;
-  const sandbox={URLSearchParams,location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},navigator:{},sessionStorage:{getItem:()=>null,removeItem(){}},localStorage:{getItem:k=>k==='draft'?draft.get(k):storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{addEventListener(){},confirm:()=>confirmed},document:{documentElement:{},createElement:()=>({}),querySelector:()=>({append:value=>{button=value;}})}};
-  vm.runInNewContext(code,withPaths(sandbox));button.onclick();assert.equal(storage.get('handover:username'),'Xpy');assert.equal(destinations.length,0);
-  confirmed=true;await button.onclick();assert.ok(!storage.get('handover:username'));assert.deepEqual(destinations,['/']);assert.equal(draft.get('draft'),'keep');
+  const storage=new Map([['handover:username','Xpy']]),destinations=[],events={};let appended=0;
+  const sandbox={URLSearchParams,location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},navigator:{},sessionStorage:{getItem:()=>null,removeItem(){}},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},window:{addEventListener:(type,fn)=>events[type]=fn},document:{documentElement:{},createElement:()=>({}),querySelector:()=>({append:()=>appended++})}};
+  vm.runInNewContext(code,withPaths(sandbox));assert.equal(appended,0);assert.equal(destinations.length,0);assert.equal(sandbox.document.documentElement.hidden,false);
+  storage.set('handover:username','Other');events.storage({key:'handover:username'});assert.equal(sandbox.document.documentElement.hidden,true);assert.deepEqual(destinations,['/?username=Xpy&request=test-request']);
+});
+
+test('question headers expose accessible icon back and single-line title styling', () => {
+ const custom=fs.readFileSync(new URL('../web/custom.html',import.meta.url),'utf8');
+ assert.match(custom,/class="home-link"[^>]*aria-label="返回列表"/);assert.match(custom,/<svg[^>]*aria-hidden="true"/);assert.doesNotMatch(custom,/← 全部请求/);
+ for(const file of ['grill.css','custom.css']){const css=fs.readFileSync(new URL('../web/'+file,import.meta.url),'utf8');for(const rule of ['min-width:0','white-space:nowrap','text-overflow:ellipsis','44px'])assert.ok(css.includes(rule));}
 });
 
 test('custom deep link without deliberate session does not load private-shaped content', async () => {
@@ -348,4 +354,15 @@ test('username HTML pattern compiles with browser Unicode sets and retains allow
  const matcher=new RegExp('^(?:'+pattern+')$','v');
  for(const name of ['Xpy','user-one','user_two','User123'])assert.equal(matcher.test(name),true);
  for(const name of ['','user/name','user name','a'.repeat(65)])assert.equal(matcher.test(name),false);
+});
+
+test('cancel controls stay actionable at the bottom, not in question headers', () => {
+ const custom=fs.readFileSync(new URL('../web/custom.html',import.meta.url),'utf8');
+ assert.doesNotMatch(custom.match(/<header>[\s\S]*?<\/header>/)[0],/cancel-request/);
+ assert.match(custom,/<footer[^>]*><button id="cancel-request" type="button">取消本次回答<\/button><\/footer>/);
+ const bridge=fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8');
+ assert.ok(bridge.includes("document.querySelector('footer').append(cancel)"));
+ assert.ok(!bridge.includes("document.querySelector('header').append(cancel)"));
+ assert.ok(bridge.includes("window.confirm('取消本次回答？"));
+ assert.ok(bridge.includes("fetch(withToken('/cancel')"));
 });

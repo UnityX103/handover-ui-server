@@ -93,10 +93,6 @@ if (/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(window.HandoverPaths.pathname())) {
       location.replace(window.HandoverPaths.url('/?') + new URLSearchParams({username:target,request:window.HandoverPaths.requestId()})); return false;
     };
     window.addEventListener('pageshow',check);window.addEventListener('storage',(event)=>{if(['handover:username','handover:identity-epoch'].includes(event.key))check();});
-    if (check()) {
-      const button = document.createElement('button'); button.id = 'username-logout'; button.type = 'button'; button.textContent = '退出用户名';
-      button.onclick = async () => { if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace(window.HandoverPaths.url('/'));return;} if (!window.confirm('退出当前用户名？未提交的编辑可能丢失；已保存的草稿会保留。')) return; button.disabled = true; try { await window.HandoverPush.clear(target,pageEpoch); if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace(window.HandoverPaths.url('/'));return;} if(localStorage.getItem('handover:username')===target){localStorage.setItem('handover:identity-epoch',String(Number(localStorage.getItem('handover:identity-epoch')||0)+1));localStorage.setItem('handover:username','');}sessionStorage.removeItem('handover:username'); await window.HandoverUnread.identity(null).catch(()=>{}); document.documentElement.hidden = true; location.replace(window.HandoverPaths.url('/')); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; } };
-      document.querySelector('header')?.append(button);
-    }
+    check(); // Account switching stays on the home screen; keep question identity guards.
   }
 }
