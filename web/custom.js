@@ -3,8 +3,9 @@
   const id = document.querySelector('meta[name="handover-request"]').content;
   const frame = document.querySelector('#page'), status = document.querySelector('#status');
   const retry = document.querySelector('#retry');
+  const identityEpoch=localStorage.getItem('handover:identity-epoch')||'0';
   const username = new URLSearchParams(location.search).get('username');
-  if (username !== null && sessionStorage.getItem('handover:username') !== username) { location.replace('/?' + new URLSearchParams({username,request:id})); return; }
+  if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) { location.replace('/?' + new URLSearchParams({username,request:id})); return; }
   const query = username === null ? '' : '?' + new URLSearchParams({username});
   const home = username === null ? '/?mode=legacy' : '/' + query; document.querySelector('header a').href = home;
   const route = `/grill/${id}/`, channel = crypto.randomUUID(), storageKey = `handover:custom:${id}${query}`;
@@ -12,9 +13,9 @@
   try { pending = JSON.parse(localStorage.getItem(storageKey)); revision = pending?.currentRevision || 0; } catch {}
   const persist = () => { try { if (pending) localStorage.setItem(storageKey, JSON.stringify({ ...pending, currentRevision: revision })); else localStorage.removeItem(storageKey); } catch {} };
   const api = async (path, body) => {
-    if (username !== null && sessionStorage.getItem('handover:username') !== username) throw new Error('用户名会话已退出');
+    if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) throw new Error('用户名会话已退出');
     const response = await fetch(route + path + query, { cache: 'no-store', ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
-    const data = await response.json(); if (username !== null && sessionStorage.getItem('handover:username') !== username) throw new Error('用户名会话已退出'); if (!response.ok) throw new Error(data.error || '请求失败'); return data;
+    const data = await response.json(); if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) throw new Error('用户名会话已退出'); if (!response.ok) throw new Error(data.error || '请求失败'); return data;
   };
   const info = await api('bridge');
   document.querySelector('#title').textContent = info.topic;
@@ -31,7 +32,7 @@
   const tell = (message) => frame.contentWindow.postMessage({ ...message, channel }, '*');
   frame.addEventListener('load', () => tell({ type: 'handover:init' }));
   window.addEventListener('message', async (event) => {
-    if (username !== null && sessionStorage.getItem('handover:username') !== username) return;
+    if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) return;
     const data = event.data;
     if (event.source !== frame.contentWindow || event.origin !== 'null' || data?.channel !== channel) return;
     if (data.type === 'handover:dirty') { revision++; persist(); return; }
@@ -50,7 +51,7 @@
   });
   frame.src = route + 'content' + query; status.textContent = pending ? '恢复提交状态，等待来源确认' : '请在下方页面填写';
   const poll = async () => {
-    if (username !== null && sessionStorage.getItem('handover:username') !== username) { closed = true; return; }
+    if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) { closed = true; return; }
     try {
       const current = await api('bridge'); handled = current.handled;
       if (pending?.seq && handled >= pending.seq) {

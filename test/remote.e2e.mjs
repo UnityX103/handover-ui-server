@@ -114,7 +114,13 @@ try {
   await page.locator('#pairing').waitFor(); assert.match(await page.locator('#pairing').textContent(), /[0-9A-F]{16}/);
   const loginCode=(await page.locator('#pairing').textContent()).match(/[0-9A-F]{16}/)[0];
   await page.locator('#pair').click();assert.ok((await page.locator('#pairing').textContent()).includes(loginCode));
+  // A click dispatch does not await async logout: the device lock and worker
+  // acknowledgement must finish before a new navigation can cancel the task.
+  const logoutResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/logout' && response.request().method() === 'POST');
   await page.locator('#logout').click();
+  assert.equal((await logoutResponse).status(), 200);
+  await page.locator('#login').waitFor({ state: 'visible' });
+  assert.equal(await page.evaluate(async () => (await (await fetch('/api/me', { cache: 'no-store' })).json()).authenticated), false, 'logout must revoke the owner cookie before testing private deep links');
   await page.goto(`${url}/grill/${a.id}/`);
   await page.waitForURL(url + '/?mode=legacy&request=' + a.id);
   await page.locator('#login-code').fill(loginCode); await page.locator('#login-form button').click();

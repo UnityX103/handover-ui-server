@@ -4,14 +4,17 @@ const params = new URLSearchParams(location.search);
 const legacy = params.get('mode') === 'legacy';
 const targetUsername = params.get('username');
 const validUsername = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value);
-const storedUsername = () => { try { const value = sessionStorage.getItem('handover:username'); return validUsername(value) ? value : null; } catch { return null; } };
+const storedUsername = () => { try { let value = localStorage.getItem('handover:username'); if (value === null || value === undefined) { const old = sessionStorage.getItem('handover:username'); if (validUsername(old)) { value=old;localStorage.setItem('handover:username',old); } } sessionStorage.removeItem('handover:username');return validUsername(value) ? value : null; } catch { return null; } };
+const identityEpoch = () => localStorage.getItem('handover:identity-epoch') || '0';
+const initialIdentityEpoch = identityEpoch();
 let username = legacy ? null : storedUsername();
 const userQuery = legacy ? '' : username ? '?' + new URLSearchParams({username}) : '';
 let requests = [], user = null, installPrompt = null, loading = false, generation = 0, leavingUsername = false;
 const mismatch = () => !legacy && username && targetUsername !== null && targetUsername !== username;
-const current = (name, version) => version === generation && (legacy || storedUsername() === name);
+const current = (name, version) => version === generation && (legacy || storedUsername() === name && identityEpoch() === initialIdentityEpoch);
 const kinds = {questionnaire:'问卷',feedback:'反馈',help:'求助'};
-const states = {waiting:'等待你回答',submitted:'答复已保存，等待 Agent 处理',completed:'已结束',cancelled:'已取消'};
+const waitingFor = (r) => r.waitingFor || (r.status === 'submitted' ? 'agent' : 'user');
+const states = {waiting:'待回答',submitted:'已发送，等待回复',completed:'已结束',cancelled:'已取消'};
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const message = (s = '') => { $('message').textContent = s; };
 async function api(path, data, method = 'POST') {
@@ -19,23 +22,23 @@ async function api(path, data, method = 'POST') {
   if (!legacy && !['/api/me','/api/requests','/api/subscriptions'].includes(path)) throw new Error('用户名模式不提供登录或设备管理权限');
   const headers = legacy ? {} : {'X-Handover-Username':username};
   const response = await fetch(path, data === undefined ? {cache:'no-store',headers} : {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(data)});
-  const result = await response.json(); if (!response.ok) throw new Error(result.error || '连接失败'); return result;
+  const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error || '连接失败'),{status:response.status}); return result;
 }
 function render() {
   const kind = $('kind').value, status = $('status').value, search = $('search').value.trim().toLowerCase();
   const open = requests.filter((r) => !['completed','cancelled'].includes(r.status));
   $('count').textContent = open.length ? `${open.length} 个进行中的请求 · 可随时切换处理` : '当前没有待处理的请求';
-  const list = requests.filter((r) => (kind === 'all' || r.kind === kind) && (status === 'all' || (status === 'open' ? !['completed','cancelled'].includes(r.status) : ['completed','cancelled'].includes(r.status))) && (!search || [r.topic,r.source.session,r.source.project].join(' ').toLowerCase().includes(search)));
+  const list = requests.filter((r) => (kind === 'all' || r.kind === kind) && (status === 'all' || (status === 'waiting' || status === 'sent' ? !['completed','cancelled'].includes(r.status) && waitingFor(r) === (status === 'sent' ? 'agent' : 'user') : status === 'open' ? !['completed','cancelled'].includes(r.status) : ['completed','cancelled'].includes(r.status))) && (!search || [r.topic,r.source.session,r.source.project].join(' ').toLowerCase().includes(search)));
   $('requests').innerHTML = list.length ? list.map((r) => {
     const project = (r.source.project || '').split(/[\\/]/).filter(Boolean).pop() || '未命名项目';
-    return `<a class="request" href="/grill/${encodeURIComponent(r.id)}/${esc(userQuery)}"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(states[r.status])}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
+    return `<a class="request" href="/grill/${encodeURIComponent(r.id)}/${esc(userQuery)}"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(['completed','cancelled'].includes(r.status) ? states[r.status] : waitingFor(r)==='agent'?'已发送，等待回复':'待回答')}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
   }).join('') : '<div class="empty">这里暂时没有请求。<br>Agent 发起问卷、反馈或求助后，会显示在这里。</div>';
   if ('setAppBadge' in navigator) { if(open.length) navigator.setAppBadge(open.length).catch(()=>{}); else navigator.clearAppBadge().catch(()=>{}); }
 }
 async function refresh() {
   if (leavingUsername) return;
   if (!legacy && (!username || mismatch())) return;
-  if (!legacy && storedUsername() !== username) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); return; }
+  if (!legacy && (storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); return; }
   if (loading) return; loading = true; const name = username, version = generation;
   try {
     const me = await api('/api/me'); if (!current(name,version)) return; user = me; $('version').textContent = user.version === 'development' ? '开发环境' : user.version.slice(0,12);
@@ -70,7 +73,6 @@ $('username-form').onsubmit = async (event) => {
   const value = $('username').value;
   if (!validUsername(value)) { message('用户名需为 1–64 个英文字母、数字、下划线或连字符'); return; }
   if (targetUsername !== null && targetUsername !== value) { message(`此链接属于 ${targetUsername}，请使用匹配的用户名；或返回首页登录其他用户名。`); return; }
-  const bound = window.HandoverPush.marker(); if (bound && bound.username !== value) { message('此浏览器通知仍绑定其他用户名，请先在原用户名退出设备绑定'); return; }
   const attempt = ++generation; const button = event.submitter; if (button) button.disabled = true; message('正在连接目标用户名…');
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),10000);
   try {
@@ -79,10 +81,11 @@ $('username-form').onsubmit = async (event) => {
     const result = await response.json();
     if (attempt !== generation || storedUsername()) return;
     if (!response.ok || result.mode !== 'username' || result.username !== value) throw new Error('目标用户名连接失败，请重试');
-    const bound = window.HandoverPush.marker(); if (bound && bound.username !== value) throw new Error('设备仍绑定其他用户名');
-    if (!bound && 'serviceWorker' in navigator) await window.HandoverPush.active(null);
+    const bound = window.HandoverPush.marker();
+    if (bound?.username !== value && 'serviceWorker' in navigator) await window.HandoverPush.active(null);
     if (attempt !== generation || storedUsername()) return;
-    sessionStorage.setItem('handover:username',value);
+    localStorage.setItem('handover:identity-epoch',String(Number(identityEpoch())+1));
+    localStorage.setItem('handover:username',value);sessionStorage.removeItem('handover:username');
     const next = new URLSearchParams({username:value});
     const request = params.get('request'); if (request && /^[A-Za-z0-9_-]{8,100}$/.test(request)) next.set('request',request);
     location.assign('/?' + next);
@@ -94,8 +97,9 @@ $('username-cancel').onclick = () => { generation++; };
 $('username-logout').onclick = async () => {
   const name = username; generation++; leavingUsername = true; $('username-logout').disabled = true;
   try {
-    await window.HandoverPush.clear(name);
-    sessionStorage.removeItem('handover:username');
+    await window.HandoverPush.clear(name,initialIdentityEpoch);
+    if (storedUsername() !== name || identityEpoch() !== initialIdentityEpoch) { location.replace('/'); return; }
+    localStorage.setItem('handover:identity-epoch',String(Number(identityEpoch())+1));localStorage.setItem('handover:username','');sessionStorage.removeItem('handover:username');
     username = null; requests = []; user = null; $('settings-toggle').hidden = true; $('settings').hidden = true; $('requests').innerHTML = ''; $('workspace').hidden = true; $('username').value = ''; $('username-panel').hidden = false; $('username-logout').hidden = true; $('username-status').textContent = ''; location.replace('/');
   } catch (error) { message(error.message || '无法解除设备绑定，尚未退出，请重试'); }
   finally { leavingUsername = false; $('username-logout').disabled = false; }
@@ -150,10 +154,10 @@ $('push').onclick = () => task($('push'),async () => {
     if (!valid()) return;
     if (!legacy) {
       const previous = window.HandoverPush.marker();
-      if (previous && previous.username !== name) throw new Error('此浏览器已绑定其他用户名，请先在原用户名退出通知绑定');
-      await window.HandoverPush.remember(name,subscription.endpoint);
+      await window.HandoverPush.remember(name,subscription.endpoint,true,previous);
     }
-    await api('/api/subscriptions',subscription.toJSON());
+    try { await api('/api/subscriptions',subscription.toJSON()); } catch(error) { if (!legacy && error.status) window.HandoverPush.restore(); throw error; }
+    if (!legacy) await window.HandoverPush.remember(name,subscription.endpoint);
     await window.HandoverPush.active(legacy ? '@legacy' : name);
     if (!valid()) return;
     $('push').textContent='通知已开启'; $('device-state').textContent=legacy?'已保存此设备通知订阅。':`此设备接收 ${name} 的新请求通知；退出时解除此设备绑定。`;
@@ -161,7 +165,10 @@ $('push').onclick = () => task($('push'),async () => {
   await window.HandoverPush.bind(legacy ? '@legacy' : name,operation);
 });
 async function init() {
-  if('serviceWorker' in navigator) await navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.register('/sw.js').catch(()=>null) : null;
+  if (!legacy && username && registration?.active && window.HandoverPush.marker()?.username !== username) {
+    try { await window.HandoverPush.transaction(async()=>{if(storedUsername()===username && identityEpoch()===initialIdentityEpoch && window.HandoverPush.marker()?.username!==username)await window.HandoverPush.active(null);}); } catch {}
+  }
   const ticket=new URLSearchParams(location.hash.slice(1)).get('ticket');
   if(ticket && legacy) {
     history.replaceState(null,'',location.pathname+location.search);
@@ -170,7 +177,8 @@ async function init() {
   }
   await refresh();
 }
-window.addEventListener('pageshow',()=>{ if (!legacy && storedUsername() !== username) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); } });
+window.addEventListener('storage',(event)=>{if (!legacy && ['handover:username','handover:identity-epoch'].includes(event.key)) {generation++;$('workspace').hidden=true;$('requests').innerHTML='';location.replace('/');}});
+window.addEventListener('pageshow',()=>{ if (!legacy && (storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); } });
 window.addEventListener('online',refresh);
 window.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 setInterval(()=>{if(!document.hidden && (user?.authenticated || user?.mode === 'username'))refresh();},10000);

@@ -43,21 +43,31 @@ test('device unsubscribe requires subscription proof and matching username; othe
  await f.call('/api/subscriptions',{method:'DELETE',data:a});
  await f.notify(await f.create());assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[b.endpoint]);
 });
-test('binding collision refuses cross-user or legacy takeover and origin restrictions stay enforced',async t=>{
+test('explicit device rebind requires both subscription keys and preserves stale-delete/origin isolation',async t=>{
  const f=await fixture(t),a=subscription('a'),cookie=await f.login();await f.call('/api/subscriptions',{data:a});
- for(const options of [{name:'Other'},{name:null,cookie}])assert.equal((await f.call('/api/subscriptions',{...options,data:a})).status,409);
- assert.equal((await f.call('/api/subscriptions',{data:{...a,keys:subscription('wrong',3).keys}})).status,409);
+ assert.equal((await f.call('/api/subscriptions',{name:'Other',data:a})).status,200);
+ assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:a})).status,409);
+ for(const field of ['auth','p256dh'])assert.equal((await f.call('/api/subscriptions',{data:{...a,keys:{...a.keys,[field]:subscription('wrong',3).keys[field]}}})).status,409);
  assert.equal((await f.call('/api/subscriptions',{data:a,origin:'https://attacker.invalid'})).status,403);
  assert.equal((await f.call('/api/subscriptions',{method:'DELETE',data:a,origin:'https://attacker.invalid'})).status,403);
- await f.call('/api/subscriptions',{method:'DELETE',data:a});assert.equal((await f.call('/api/subscriptions',{name:'Other',data:a})).status,200);
- // A stale old-tab logout cannot erase the new binding.
+ // A stale old-tab logout cannot erase the newly rebound device.
  await f.call('/api/subscriptions',{method:'DELETE',data:a});assert.equal(Object.values(f.store.all('subscriptions'))[0].username,'Other');
+});
+test('explicit username opt-in rebinds this legacy device only and old owner logout cannot erase it',async t=>{
+ const f=await fixture(t),a=subscription('rebind'),other=subscription('private-other',2),cookie=await f.login();
+ for(const device of [a,other])assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:device})).status,200);
+ assert.equal((await f.call('/api/subscriptions',{data:a})).status,200);
+ assert.equal(Object.keys(f.store.all('subscriptions')).length,2);
+ await f.notify(await f.create());assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[a.endpoint]);
+ f.sent.length=0;await f.notify(await f.create(null));assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[other.endpoint]);
+ assert.equal((await f.call('/api/logout',{name:null,cookie,data:{}})).status,200);
+ assert.equal(Object.values(f.store.all('subscriptions'))[0].username,'Xpy');assert.equal(Object.keys(f.store.all('subscriptions')).length,1);
 });
 test('late expired-provider response cannot delete a replacement device binding',async t=>{
  let rejectSend,started;const ready=new Promise(r=>started=r);
  const f=await fixture(t,{sendNotification:()=>new Promise((resolve,reject)=>{rejectSend=reject;started();})}),a=subscription('a');
  await f.call('/api/subscriptions',{data:a});const sending=f.notify(await f.create());await ready;
- await f.call('/api/subscriptions',{method:'DELETE',data:a});await f.call('/api/subscriptions',{name:'Other',data:a});
+ await f.call('/api/subscriptions',{name:'Other',data:a});
  rejectSend(Object.assign(new Error('gone'),{statusCode:410}));await sending;
  assert.equal(Object.values(f.store.all('subscriptions'))[0].username,'Other');
 });

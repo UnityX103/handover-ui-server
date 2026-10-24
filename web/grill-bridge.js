@@ -1,14 +1,15 @@
 function handoverRequireUsername() {
   const target = new URLSearchParams(location.search).get('username');
   if (target === null) return;
-  let current; try { current = sessionStorage.getItem('handover:username'); } catch {}
+  let current; try { current = localStorage.getItem('handover:username'); } catch {}
   if (current !== target) { location.replace('/?' + new URLSearchParams({username:target,request:location.pathname.split('/')[2]})); throw new Error('请先登录匹配的用户名'); }
 }
 handoverRequireUsername();
 const handoverUsername = new URLSearchParams(location.search).get('username');
 const handoverScope = location.pathname + (handoverUsername === null ? '' : '?' + new URLSearchParams({username:handoverUsername}));
 const handoverHome = handoverUsername === null ? '/?mode=legacy' : '/?' + new URLSearchParams({username:handoverUsername});
-const handoverSessionActive = () => { if (handoverUsername === null) return true; try { return sessionStorage.getItem('handover:username') === handoverUsername; } catch { return false; } };
+const handoverIdentityEpoch=localStorage.getItem('handover:identity-epoch')||'0';
+const handoverSessionActive = () => { if (handoverUsername === null) return true; try { return localStorage.getItem('handover:username') === handoverUsername && (localStorage.getItem('handover:identity-epoch')||'0')===handoverIdentityEpoch; } catch { return false; } };
 // Included inside the upstream page's script; each send keeps its identity on retry.
 function handoverSubmissionId(actions) {
   if (!handoverSessionActive()) throw new Error('用户名会话已退出');
