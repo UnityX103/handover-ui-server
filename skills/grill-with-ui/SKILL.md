@@ -11,6 +11,8 @@ description: 通过配置的远程交接服务发起 Grill 问卷，自动用默
 
 两个 Skill 共用 `~/.config/handover-ui/config.json`，权限为 0600。`HANDOVER_CONFIG` 可指定其他本地配置文件。
 
+`serverUrl` / `HANDOVER_SERVER_URL` 支持 HTTPS 完整部署路径（如 `/handover/`）；保留该前缀，不截成 origin。服务器同时保留旧端口时，已有 handle 仍按创建时保存的地址恢复，不改写请求身份、数据或游标。
+
 ```json
 {"serverUrl":"<HANDOVER_SERVER_URL>","username":"Xpy"}
 ```

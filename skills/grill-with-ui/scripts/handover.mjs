@@ -23,8 +23,8 @@ const args = (argv) => {
 };
 function serverUrl(value) {
   const url = new URL(value);
-  if(url.username||url.password||url.search||url.hash||url.pathname!=='/'||(!['https:'].includes(url.protocol)&&!['127.0.0.1','localhost','[::1]'].includes(url.hostname)))throw new Error('服务器必须是 HTTPS 站点地址；本机回环测试可使用 HTTP');
-  return url.origin;
+  if(url.username||url.password||url.search||url.hash||!/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]*$/.test(url.pathname)||(url.protocol!=='https:'&&!(url.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(url.hostname))))throw new Error('服务器必须是 HTTPS 站点地址，可包含部署路径；本机回环测试可使用 HTTP');
+  return url.origin+url.pathname.replace(/\/$/,'');
 }
 const username = (value) => { if(typeof value!=='string'|| !/^[A-Za-z0-9_-]{1,64}$/.test(value))throw new Error('用户名应为 1–64 个英文字母、数字、下划线或短横线');return value; };
 const requestUrl = (cfg,id='') => cfg.serverUrl+(id?`/grill/${encodeURIComponent(id)}/`:'/')+'?username='+encodeURIComponent(username(cfg.username));

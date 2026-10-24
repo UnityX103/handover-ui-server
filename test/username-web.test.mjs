@@ -4,6 +4,19 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const appCode = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
+
+const pathsCode = fs.readFileSync(new URL('../web/paths.js', import.meta.url), 'utf8');
+function withPaths(sandbox) {
+  sandbox.window ||= {};
+  if (!sandbox.window.HandoverPaths) {
+    sandbox.document ||= {};
+    const query = sandbox.document.querySelector;
+    sandbox.document.querySelector = (selector) => selector === 'meta[name="handover-base"]' ? { content: '/' } : query?.(selector);
+    vm.runInNewContext(pathsCode, sandbox);
+  }
+  return sandbox;
+}
+
 async function home(search = '', hash = '', saved = null, delayList = null, oldSession = null) {
   const storage = new Map(saved !== null ? [['handover:username',saved]] : []), oldStorage = new Map(oldSession ? [['handover:username',oldSession]] : []), listeners = {};
   const elements = new Map(), calls = [], replaced = [], assigned = [];
@@ -22,7 +35,7 @@ async function home(search = '', hash = '', saved = null, delayList = null, oldS
       return { ok: true, json: async () => path === '/api/me' ? { authenticated: false, version: 'test-version', ...(username ? {mode:'username',username,vapidPublicKey:'AQID'} : {}) } : { requests: [{id:'test-request',kind:'help',topic:'Test',source:{session:'source-test'},status:'waiting',created:'2026-01-01T00:00:00Z'}] } };
     },
   };
-  vm.createContext(sandbox); vm.runInContext(appCode, sandbox);
+  vm.createContext(withPaths(sandbox)); vm.runInContext(appCode, sandbox);
   await new Promise(setImmediate);
   return { sandbox, elements, calls, replaced, assigned, storage, oldStorage, listeners };
 }
@@ -79,7 +92,7 @@ test('question return state is scoped by username', () => {
   const code = fs.readFileSync(new URL('../web/grill-bridge.js', import.meta.url), 'utf8');
   const destinations = [], storage = new Map([['handover:username','Xpy'],['handover:return:/grill/test-request/?username=Xpy','2'],['handover:return:/grill/test-request/?username=Other','5']]);
   const sandbox = {location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:(v)=>destinations.push(v)},URLSearchParams,navigator:{},document:{addEventListener(){}},localStorage:{getItem:k=>storage.get(k)},sessionStorage:{getItem:(k)=>storage.get(k),removeItem:(k)=>storage.delete(k)},stagedCount:()=>0,typedAnswers:()=>[]};
-  vm.createContext(sandbox);vm.runInContext(code,sandbox);vm.runInContext('handoverReturnWhenAcknowledged({agent:{handled:2}})',sandbox);
+  vm.createContext(withPaths(sandbox));vm.runInContext(code,sandbox);vm.runInContext('handoverReturnWhenAcknowledged({agent:{handled:2}})',sandbox);
   assert.deepEqual(destinations,['/?username=Xpy']);
   assert.equal(storage.get('handover:return:/grill/test-request/?username=Other'),'5');
 });
@@ -93,7 +106,7 @@ test('custom page scopes metadata, iframe, persisted replies and return URL', as
     sessionStorage:{getItem:()=> 'Xpy'},crypto:{randomUUID:()=> 'isolated-channel'},localStorage:{getItem:(key)=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:(key)=>storage.delete(key)},window:{addEventListener(){}},setTimeout(){},
     fetch:async(path)=>{calls.push(path);return {ok:true,json:async()=>({topic:'test',handled:0,page:{feedbackType:'test',pageHash:'hash'},maxFeedbackBytes:1000})};},
   };
-  vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),sandbox);
+  vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),withPaths(sandbox));
   await new Promise(setImmediate);
   assert.deepEqual(calls,['/grill/test-request/bridge?username=Xpy','/grill/test-request/bridge?username=Xpy']);
   assert.equal(nodes.get('#page').src,'/grill/test-request/content?username=Xpy');
@@ -104,14 +117,14 @@ test('question logout cancellation retains session and drafts; confirmation exit
   const code=fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8');
   const storage=new Map([['handover:username','Xpy']]),draft=new Map([['draft','keep']]),destinations=[];let button,confirmed=false;
   const sandbox={URLSearchParams,location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},navigator:{},sessionStorage:{getItem:()=>null,removeItem(){}},localStorage:{getItem:k=>k==='draft'?draft.get(k):storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{addEventListener(){},confirm:()=>confirmed},document:{documentElement:{},createElement:()=>({}),querySelector:()=>({append:value=>{button=value;}})}};
-  vm.runInNewContext(code,sandbox);button.onclick();assert.equal(storage.get('handover:username'),'Xpy');assert.equal(destinations.length,0);
+  vm.runInNewContext(code,withPaths(sandbox));button.onclick();assert.equal(storage.get('handover:username'),'Xpy');assert.equal(destinations.length,0);
   confirmed=true;await button.onclick();assert.ok(!storage.get('handover:username'));assert.deepEqual(destinations,['/']);assert.equal(draft.get('draft'),'keep');
 });
 
 test('custom deep link without deliberate session does not load private-shaped content', async () => {
   const destinations=[],calls=[];const nodes=new Map([['meta[name="handover-request"]',{content:'test-request'}],['#page',{}],['#status',{}],['#retry',{}]]);
   const sandbox={document:{querySelector:key=>nodes.get(key)},location:{search:'?username=Xpy',replace:url=>destinations.push(url)},URLSearchParams,localStorage:{getItem:()=>null},sessionStorage:{getItem:()=>null},fetch:async(url)=>calls.push(url)};
-  vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),sandbox);await new Promise(setImmediate);
+  vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),withPaths(sandbox));await new Promise(setImmediate);
   assert.deepEqual(calls,[]);assert.deepEqual(destinations,['/?username=Xpy&request=test-request']);
 });
 
@@ -126,7 +139,7 @@ test('failed connection does not remember username and canceled login cannot lat
 test('delayed question submit and acknowledgement callbacks do nothing after logout', () => {
  const storage=new Map([['handover:username','Xpy']]),local=new Map(),destinations=[];
  const sandbox={location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},URLSearchParams,navigator:{},document:{addEventListener(){}},sessionStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},localStorage:{getItem:key=>key==='handover:username'?storage.get(key):local.get(key),setItem:(key,value)=>local.set(key,value)},stagedCount:()=>0,typedAnswers:()=>[]};
- vm.createContext(sandbox);vm.runInContext(fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8'),sandbox);
+ vm.createContext(withPaths(sandbox));vm.runInContext(fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8'),sandbox);
  storage.delete('handover:username');vm.runInContext("handoverSubmissionReceived({ok:true,seq:1},[{type:'answer'}]); handoverReturnWhenAcknowledged({agent:{handled:1}})",sandbox);
  assert.equal(storage.size,0);assert.equal(local.size,0);assert.deepEqual(destinations,[]);
 });
@@ -154,7 +167,7 @@ test('push coordinator waits for binding, deletes full capability and never unbi
  const values=new Map(),calls=[],messages=[];let finish;
  const subscription={endpoint:'https://push.invalid/device',toJSON:()=>({endpoint:'https://push.invalid/device',keys:{auth:'test',p256dh:'test-key'}})};
  const sandbox={window:{},MessageChannel,setTimeout,clearTimeout,location:{pathname:'/'},navigator:{locks:{request:async(name,fn)=>fn()},serviceWorker:{addEventListener(){},ready:Promise.resolve({active:{postMessage:(m,ports)=>{messages.push(m);ports?.[0]?.postMessage({ok:true});}},pushManager:{getSubscription:async()=>subscription}})}},localStorage:{getItem:k=>values.get(k),setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},fetch:async(url,options)=>{calls.push({url,options});return {ok:true};}};
- vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),sandbox);
+ vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),withPaths(sandbox));
  const manager=sandbox.window.HandoverPush;
  const binding=manager.bind('Xpy',async()=>{await new Promise(resolve=>{finish=resolve;});await manager.remember('Xpy',subscription.endpoint);});await new Promise(setImmediate);
  const clearing=manager.clear('Xpy');assert.equal(calls.length,0);finish();await binding;await clearing;
@@ -177,7 +190,7 @@ test('fresh-tab login may remember another username without automatically rebind
 test('cross-tab clear waits for delayed bind before its marker exists and preserves next-user ordering', async () => {
  const storage=new Map(),active=[];let response,tail=Promise.resolve();const locks={request:(name,fn)=>{const operation=tail.then(fn);tail=operation.catch(()=>{});return operation;}};
  const sub={endpoint:'https://push.invalid/shared',toJSON:()=>({endpoint:'https://push.invalid/shared',keys:{auth:'a',p256dh:'p'}})};
- function tab(){const sandbox={window:{},MessageChannel,setTimeout,clearTimeout,location:{pathname:'/'},navigator:{locks,serviceWorker:{addEventListener(){},ready:Promise.resolve({active:{postMessage:(m,ports)=>{if(m.type==='handover:push-user'){active.push(m.username);ports[0].postMessage({ok:true});}}},pushManager:{getSubscription:async()=>sub}})}},localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},fetch:async()=>({ok:true})};vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),sandbox);return sandbox.window.HandoverPush;}
+ function tab(){const sandbox={window:{},MessageChannel,setTimeout,clearTimeout,location:{pathname:'/'},navigator:{locks,serviceWorker:{addEventListener(){},ready:Promise.resolve({active:{postMessage:(m,ports)=>{if(m.type==='handover:push-user'){active.push(m.username);ports[0].postMessage({ok:true});}}},pushManager:{getSubscription:async()=>sub}})}},localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},fetch:async()=>({ok:true})};vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),withPaths(sandbox));return sandbox.window.HandoverPush;}
  const a=tab(),b=tab();const first=a.bind('Xpy',async()=>{await new Promise(resolve=>{response=resolve;});await a.remember('Xpy',sub.endpoint);await a.active('Xpy');});await new Promise(setImmediate);
  const logout=b.clear('Xpy');await new Promise(setImmediate);const next=b.bind('Other',async()=>{await b.remember('Other',sub.endpoint);await b.active('Other');});response();await Promise.all([first,logout,next]);
  assert.deepEqual(active,['Xpy',null,'Other']);assert.equal(b.marker().username,'Other');
@@ -222,7 +235,7 @@ test('other-tab device logout invalidates an unanswered permission prompt throug
  h.sandbox.navigator.locks={request:async(name,fn)=>fn()};
  h.sandbox.navigator.serviceWorker={addEventListener(){},ready:Promise.resolve({active:{postMessage(){}},pushManager:{getSubscription:async()=>{registrations++;return null;}}})};
  vm.runInContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),h.sandbox);
- const other={window:{},location:{pathname:'/'},navigator:h.sandbox.navigator,localStorage:device};vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),other);
+ const other={window:{},location:{pathname:'/'},navigator:h.sandbox.navigator,localStorage:device};vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),withPaths(other));
  h.sandbox.window.PushManager={};h.sandbox.window.Notification={};h.sandbox.Notification={requestPermission:()=>new Promise(resolve=>{grant=resolve;})};
  const enabling=h.elements.get('push').onclick();await new Promise(setImmediate);await other.window.HandoverPush.clear('Xpy');assert.equal(h.storage.get('handover:username'),'Xpy');grant('granted');await enabling;
  assert.equal(registrations,0);assert.ok(!h.calls.some(c=>c.path==='/api/subscriptions'));
@@ -265,7 +278,7 @@ test('explicit device opt-in rebinds possessed subscription and known failure re
 test('stale same-name logout cannot delete a newer identity binding inside device lock', async () => {
  const state=new Map([['handover:username','Xpy'],['handover:identity-epoch','2'],['handover:push-binding',JSON.stringify({username:'Xpy',endpoint:'owned'})]]),calls=[];
  const sandbox={window:{},location:{pathname:'/'},navigator:{locks:{request:async(name,fn)=>fn()}},localStorage:{getItem:key=>state.get(key),setItem:(key,value)=>state.set(key,value),removeItem:key=>state.delete(key)},fetch:async(...args)=>{calls.push(args);}};
- vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),sandbox);await sandbox.window.HandoverPush.clear('Xpy','1');
+ vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),withPaths(sandbox));await sandbox.window.HandoverPush.clear('Xpy','1');
  assert.equal(calls.length,0);assert.equal(JSON.parse(state.get('handover:push-binding')).username,'Xpy');assert.equal(state.get('handover:push-epoch'),undefined);
  const h=await home('?username=Xpy','','Xpy');let finish;h.sandbox.window.HandoverPush.clear=()=>new Promise(resolve=>{finish=resolve;});const logout=h.elements.get('username-logout').onclick();h.storage.set('handover:identity-epoch','1');finish();await logout;assert.equal(h.storage.get('handover:username'),'Xpy');
 });
@@ -285,7 +298,7 @@ test('clear unread button invokes only local metadata coordinator and never writ
 
 test('unsupported worker local unread clear persists across refresh and future attention rebadges', async () => {
  const storage=new Map([['handover:username','Xpy']]),badges=[];const sandbox={window:{},location:{pathname:'/'},navigator:{setAppBadge:async n=>badges.push(n),clearAppBadge:async()=>badges.push(0)},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}};
- vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),sandbox);const unread=sandbox.window.HandoverUnread;
+ vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),withPaths(sandbox));const unread=sandbox.window.HandoverUnread;
  await unread.sync('Xpy',[{id:'request-12345678',version:1,waiting:true},{id:'request-sent123',version:1,waiting:false}]);assert.equal(badges.at(-1),1);
  await unread.clear('Xpy',[]);assert.equal(badges.at(-1),0);await unread.sync('Xpy',[{id:'request-12345678',version:1,waiting:true}]);assert.equal(badges.at(-1),0);await unread.sync('Xpy',[{id:'request-12345678',version:2,waiting:true}]);assert.equal(badges.at(-1),1);
 });
@@ -293,7 +306,7 @@ test('unsupported worker local unread clear persists across refresh and future a
 function acceptedQuestion(postImpl) {
  const stored=new Map([['handover:username','Xpy']]),session=new Map(),timers=[],destinations=[],receipt={};
  const sandbox={URLSearchParams,location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},navigator:{},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},sessionStorage:{getItem:k=>session.get(k),setItem:(k,v)=>session.set(k,v),removeItem:k=>session.delete(k)},document:{addEventListener(){},getElementById:()=>receipt},setTimeout:fn=>{timers.push(fn);},S:{agent:{handled:0}},local:{staged:{q1:{answer:{kind:'text',text:'sent'}}},drafts:{},vfeedback:[]},commit(){},...(postImpl?{post:postImpl}:{})};
- vm.createContext(sandbox);vm.runInContext(fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8'),sandbox);return{sandbox,stored,session,timers,destinations,receipt};
+ vm.createContext(withPaths(sandbox));vm.runInContext(fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8'),sandbox);return{sandbox,stored,session,timers,destinations,receipt};
 }
 test('confirmed questionnaire save returns immediately with zero ACK, invalid/uncertain responses stay', () => {
  const h=acceptedQuestion();h.sandbox.handoverSubmissionReceived({ok:true,saved:true,seq:1},[{type:'answer'}],true);assert.equal(h.destinations.length,0);h.timers.shift()();assert.deepEqual(h.destinations,['/?username=Xpy']);assert.equal(h.sandbox.S.agent.handled,0);
@@ -313,7 +326,7 @@ async function customSubmitFixture() {
  const nodes=new Map(),stored=new Map([['handover:username','Xpy']]),events={},timers=[],destinations=[],posts=[];let finish;
  for(const selector of ['meta[name="handover-request"]','#page','#status','#retry','#cancel-request','#title','header a'])nodes.set(selector,{content:'test-request',listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},contentWindow:{postMessage(){}}});
  const sandbox={URLSearchParams,TextEncoder,crypto:{randomUUID:()=> 'channel-test'},document:{querySelector:key=>nodes.get(key)},location:{search:'?username=Xpy',replace:url=>destinations.push(url)},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},window:{addEventListener:(name,fn)=>{events[name]=fn;},confirm:()=>true},setTimeout:(fn,delay)=>timers.push({fn,delay}),fetch:async(url,options)=>{if(url.includes('/feedback')){posts.push(JSON.parse(options.body));return new Promise(resolve=>{finish=resolve;});}return{ok:true,json:async()=>({topic:'synthetic',status:'waiting',handled:0,page:{feedbackType:'test',pageHash:'hash'},maxFeedbackBytes:10000})};}};
- vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),sandbox);await new Promise(setImmediate);
+ vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),withPaths(sandbox));await new Promise(setImmediate);
  const event=(type,payload)=>({source:nodes.get('#page').contentWindow,origin:'null',data:{type,channel:'channel-test',messageId:'message-test',payload}});
  return{nodes,stored,timers,destinations,posts,event,submit:payload=>events.message(event('handover:submit',payload)),dirty:()=>events.message(event('handover:dirty')),finish:(result,status=true)=>finish({ok:status,json:async()=>result})};
 }

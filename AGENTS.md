@@ -83,6 +83,7 @@
 
 - 仓库：`UnityX103/handover-ui-server`；发布分支为 `main`。提交标题和正文默认以简体中文为主，准确描述实际变更。
 - 公网入口由服务器环境变量 `HANDOVER_PUBLIC_URL` 设置。保留既有公网端口 8024、内部应用端口 8025 和接收器端口 8032；不在项目文档中记录实际域名、服务器地址或秘密值。
+- 443 的 `/handover/` 路径通过 `HANDOVER_PUBLIC_ALIASES` 显式登记，Nginx 使用 `deploy/nginx-path.conf` 保留前缀转发。网页、客户端链接、manifest 与 Service Worker 必须使用当前入口路径；原 8024 handle 继续原地址，不改来源身份或游标。
 - 普通源码发布走 GitHub push webhook：校验签名、持久入队、只读拉取可信仓库的 `main`、在独立 release 测试、原子切换、健康检查，失败回滚。不要直接编辑运行中的 release 或用 SSH 拷贝代码替代这条发布链路。
 - `/opt/handover-ui/current` 指向当前 release；数据在 `/var/lib/handover-ui`，受限配置在 `/etc/handover-ui/`。可信运维脚本与 systemd 配置需要显式维护，不假定应用 push 会替换这些文件。
 - 发布验收同时核对 GitHub 目标完整 SHA、Webhook 投递结果、部署结果和公网 `/healthz` 的 `version`。Webhook 返回 202 只表示入队，本地提交或推送不代表部署成功。

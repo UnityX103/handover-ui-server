@@ -24,7 +24,7 @@ window.HandoverPush = (() => {
     await pending; if (!navigator.locks?.request && marker()?.username !== name) return; return locked(async()=>{ if(expectedIdentity!==undefined && (localStorage.getItem('handover:identity-epoch')||'0')!==expectedIdentity)return; localStorage.setItem('handover:push-epoch',String(Number(epoch())+1)); const bound = marker(); if (!bound || bound.username !== name) { if(bound && localStorage.getItem('handover:username')===name && 'serviceWorker' in navigator)await active(null);return; }
     const registration = await navigator.serviceWorker.ready, subscription = await registration.pushManager.getSubscription();
     if (!subscription || subscription.endpoint !== bound.endpoint) throw new Error('设备订阅状态不一致，未退出；请刷新后重试');
-    const response = await fetch('/api/subscriptions',{method:'DELETE',headers:{'Content-Type':'application/json','X-Handover-Username':name},body:JSON.stringify(subscription.toJSON())});
+    const response = await fetch(window.HandoverPaths.url('/api/subscriptions'),{method:'DELETE',headers:{'Content-Type':'application/json','X-Handover-Username':name},body:JSON.stringify(subscription.toJSON())});
     if (!response.ok) throw new Error('无法解除此设备通知绑定，尚未退出；请联网后重试');
     const latest = marker(); if (latest?.username === name && latest.endpoint === bound.endpoint) { await active(null); localStorage.removeItem(key); }
     });
@@ -70,7 +70,7 @@ if ('serviceWorker' in navigator) {
     if (event.data?.type !== 'handover:navigate') return;
     try {
       const target = new URL(event.data.url, location.origin);
-      if (target.origin !== location.origin || !/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(target.pathname)) return;
+      if (target.origin !== location.origin || !/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(window.HandoverPaths.pathname(target.pathname))) return;
       const username = target.searchParams.get('username');
       if (username !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(username)) return;
       const destination = target.pathname + (username === null ? '' : '?' + new URLSearchParams({username}));
@@ -82,7 +82,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', ready);
 }
 // This per-tab username session is a deliberate UI choice, not authentication.
-if (/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(location.pathname)) {
+if (/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(window.HandoverPaths.pathname())) {
   const target = new URLSearchParams(location.search).get('username');
   if (target !== null) {
     const pageEpoch=localStorage.getItem('handover:identity-epoch')||'0';
@@ -90,12 +90,12 @@ if (/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(location.pathname)) {
       let name; try { name = window.handoverStoredUsername(); } catch {}
       if (name === target && (localStorage.getItem('handover:identity-epoch')||'0')===pageEpoch) { document.documentElement.hidden = false; return true; }
       document.documentElement.hidden = true;
-      location.replace('/?' + new URLSearchParams({username:target,request:location.pathname.split('/')[2]})); return false;
+      location.replace(window.HandoverPaths.url('/?') + new URLSearchParams({username:target,request:window.HandoverPaths.requestId()})); return false;
     };
     window.addEventListener('pageshow',check);window.addEventListener('storage',(event)=>{if(['handover:username','handover:identity-epoch'].includes(event.key))check();});
     if (check()) {
       const button = document.createElement('button'); button.id = 'username-logout'; button.type = 'button'; button.textContent = '退出用户名';
-      button.onclick = async () => { if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if (!window.confirm('退出当前用户名？未提交的编辑可能丢失；已保存的草稿会保留。')) return; button.disabled = true; try { await window.HandoverPush.clear(target,pageEpoch); if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if(localStorage.getItem('handover:username')===target){localStorage.setItem('handover:identity-epoch',String(Number(localStorage.getItem('handover:identity-epoch')||0)+1));localStorage.setItem('handover:username','');}sessionStorage.removeItem('handover:username'); await window.HandoverUnread.identity(null).catch(()=>{}); document.documentElement.hidden = true; location.replace('/'); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; } };
+      button.onclick = async () => { if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace(window.HandoverPaths.url('/'));return;} if (!window.confirm('退出当前用户名？未提交的编辑可能丢失；已保存的草稿会保留。')) return; button.disabled = true; try { await window.HandoverPush.clear(target,pageEpoch); if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace(window.HandoverPaths.url('/'));return;} if(localStorage.getItem('handover:username')===target){localStorage.setItem('handover:identity-epoch',String(Number(localStorage.getItem('handover:identity-epoch')||0)+1));localStorage.setItem('handover:username','');}sessionStorage.removeItem('handover:username'); await window.HandoverUnread.identity(null).catch(()=>{}); document.documentElement.hidden = true; location.replace(window.HandoverPaths.url('/')); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; } };
       document.querySelector('header')?.append(button);
     }
   }

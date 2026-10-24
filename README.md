@@ -8,6 +8,7 @@ Agent 发起请求，自动打开默认浏览器，并在当前回合分段等�
 
 - 仓库：`UnityX103/handover-ui-server`，发布分支 `main`。
 - 公网入口由服务器环境变量 `HANDOVER_PUBLIC_URL` 设置；文档不记录实际部署地址。
+- 现有 HTTPS 443 可挂载 `/handover/`，完整地址加入 `HANDOVER_PUBLIC_ALIASES`；Nginx 配置见 `deploy/nginx-path.conf`。8024 原入口可并行使用，共享同一份请求和数据。
 - 内部应用：`127.0.0.1:8025`；内部 GitHub 接收器：`127.0.0.1:8032`。
 - GitHub 原生 push webhook → 签名验证 → 持久队列 → 服务器只读拉取 → 独立 release → 测试 → 原子切换 → 健康检查。失败回滚，不使用定时拉取。
 
@@ -113,6 +114,8 @@ npm test
 # 另行提供已安装的 Playwright 与 Chromium：
 PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium npm run test:browser
+# 复用上述 Playwright / Chromium 环境，验证子路径下的手机问答与 JSON 页面：
+HANDOVER_TEST_BASE_PATH=/handover node test/username.e2e.mjs
 ```
 
 测试使用隔离临时目录和虚构来源，不向真实会话伪造答复。测试涵盖上游兼容、认证、来源隔离、幂等、恢复、前台等待、推送调度、Webhook 与回滚；浏览器检查手机/平板布局、多选、草稿、重复提交、用户名会话、旧入口停用和缓存边界。真实手机安装与系统通知许可需在设备上验收。

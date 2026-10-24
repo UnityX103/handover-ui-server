@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events';
 import webpush from 'web-push';
 import { applyPatch, validateState, validateAxesChange } from '../server.mjs';
 import { Store, atomic, hash, equal, now, validId } from './store.mjs';
+import { publicEndpoint, requestMount, shellHtml } from './public-paths.mjs';
 import { customLimits, customPage, pageInfo, validateFeedback, customCsp, customContent } from './custom-page.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -43,16 +44,15 @@ export function createHandoverServer(options = {}) {
   const config = {
     host: process.env.HANDOVER_HOST || '127.0.0.1', port: Number(process.env.HANDOVER_PORT || 8025),
     publicUrl: process.env.HANDOVER_PUBLIC_URL || 'http://127.0.0.1:8025',
+    publicAliases: process.env.HANDOVER_PUBLIC_ALIASES || '',
     dataDir: process.env.HANDOVER_DATA_DIR || path.join(os.homedir(), '.local/share/handover-ui'),
     adminToken: process.env.HANDOVER_ADMIN_TOKEN,
     vapidPublicKey: process.env.HANDOVER_VAPID_PUBLIC_KEY, vapidPrivateKey: process.env.HANDOVER_VAPID_PRIVATE_KEY,
     vapidSubject: process.env.HANDOVER_VAPID_SUBJECT, ...options,
   };
   if (!text(config.adminToken) || config.adminToken.length < 32) throw new Error('管理密钥至少 32 字符；旧登录入口已停用');
-  const publicUrl = new URL(config.publicUrl);
-  if (publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== '/') throw new Error('HANDOVER_PUBLIC_URL 必须是没有路径、凭据或查询参数的站点地址');
-  if (publicUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('公网入口必须使用 HTTPS');
-  const secure = publicUrl.protocol === 'https:';
+  const publicUrl = publicEndpoint(config.publicUrl);
+  const endpoints = [publicUrl, ...config.publicAliases.split(',').filter(Boolean).map((value) => publicEndpoint(value.trim()))];
   const store = new Store(config.dataDir);
   // Archived login codes, sessions, tickets and credentials are retained untouched.
   let vapid = store.all('vapid');
@@ -89,10 +89,11 @@ export function createHandoverServer(options = {}) {
     if (!usernameRecord(request)) return 0;
     const subscriptions = store.all('subscriptions');
     const scopedSubscriptions = Object.entries(subscriptions).filter(([, sub]) => sub.accessMode === 'username' && sub.username === request.username);
-    const message = JSON.stringify({ ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, updated: request.updated, userAttentionVersion: attentionVersion(request), url: `/grill/${request.id}/${usernameRecord(request) ? '?username=' + encodeURIComponent(request.username) : ''}` });
+    const notice = { ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, updated: request.updated, userAttentionVersion: attentionVersion(request) };
     const results = await Promise.allSettled(scopedSubscriptions.map(async ([key, sub]) => {
       try {
         const send = config.sendNotification || webpush.sendNotification.bind(webpush);
+        const message = JSON.stringify({ ...notice, url: `${sub.basePath || '/'}grill/${request.id}/?username=${encodeURIComponent(request.username)}` });
         await send(sub.subscription, message, { TTL: 86400, urgency: 'high', timeout: 10000, vapidDetails: { subject: config.vapidSubject || publicUrl.origin, publicKey: vapid.publicKey, privateKey: vapid.privateKey } });
       } catch (e) {
         if (e.statusCode === 404 || e.statusCode === 410) { const current = store.all('subscriptions'); if (JSON.stringify(current[key]) === JSON.stringify(sub)) { delete current[key]; store.save('subscriptions', current); } }
@@ -116,10 +117,10 @@ export function createHandoverServer(options = {}) {
   const version = config.version || process.env.HANDOVER_VERSION || (() => { try { return fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim(); } catch { return 'development'; } })();
   let server;
   const actualOrigin = () => `http://${config.host === '::1' ? '[::1]' : config.host}:${server.address()?.port || config.port}`;
-  const page = (r) => {
+  const page = (r, basePath) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');
-    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && !handoverSessionActive()) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
+    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`${basePath}grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && !handoverSessionActive()) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); if (!j || typeof j !== \"object\" || Array.isArray(j)) j = {}; j.ok = !!(r.ok && j.ok && j.saved === true && Number.isSafeInteger(j.seq) && j.seq > 0 && handoverSessionActive()); handoverSubmissionReceived(j, actions, r.ok);');
@@ -128,7 +129,7 @@ export function createHandoverServer(options = {}) {
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
     if (usernameRecord(r)) {
-      const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = localStorage.getItem('handover:username'); if (handoverSelectedUser === null) { handoverSelectedUser = sessionStorage.getItem('handover:username'); if (handoverSelectedUser) localStorage.setItem('handover:username', handoverSelectedUser); sessionStorage.removeItem('handover:username'); } } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify('/?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
+      const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = localStorage.getItem('handover:username'); if (handoverSelectedUser === null) { handoverSelectedUser = sessionStorage.getItem('handover:username'); if (handoverSelectedUser) localStorage.setItem('handover:username', handoverSelectedUser); sessionStorage.removeItem('handover:username'); } } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify(basePath + '?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
       html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
     }
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
@@ -152,7 +153,7 @@ export function createHandoverServer(options = {}) {
       ['>Recommended</div>', '>推荐</div>'], ['"Recommended"', '"推荐"'],
     ];
     for (const [from, to] of labels) html = html.replaceAll(from, to);
-    return html;
+    return shellHtml(html, basePath);
   };
   const wait = async (req, res, r, after, timeout) => {
     if (waiters.has(r.id)) fail(409, '此请求已有前台等待者，请使用原 handle 继续');
@@ -180,12 +181,11 @@ export function createHandoverServer(options = {}) {
   };
   server = http.createServer(async (req, res) => {
     try {
-      const allowedHosts = [publicUrl.host, new URL(actualOrigin()).host];
-      if (!allowedHosts.includes(req.headers.host)) fail(403, 'Host 不匹配');
-      const u = new URL(req.url, publicUrl), p = u.pathname;
+      const { url: u, path: p, basePath, origin, redirect } = requestMount(req, endpoints, actualOrigin());
+      if (redirect && ['GET', 'HEAD'].includes(req.method)) { res.writeHead(308, { Location: basePath + u.search, 'Cache-Control': 'no-store' }); return res.end(); }
       username(req);
       if (!['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) fail(405, '不支持的方法');
-      if (req.headers.origin && ![publicUrl.origin, ...(!secure ? [actualOrigin()] : [])].includes(req.headers.origin)) fail(403, '拒绝跨站请求');
+      if (req.headers.origin && req.headers.origin !== origin) fail(403, '拒绝跨站请求');
       if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) fail(403, '拒绝跨站写入');
       if (req.method === 'GET' && p === '/healthz') return json(res, 200, { ok: true, service: 'handover-ui', version });
       if (req.method === 'GET' && p === '/api/capabilities') { requireUsername(req); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
@@ -201,7 +201,7 @@ export function createHandoverServer(options = {}) {
         if (previous && (!equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth))) fail(409, '此设备订阅证明不匹配，不能替换现有绑定；请在本设备重新授权通知');
         // Persist only validated Web Push fields; never echo device endpoints or keys.
         const device = {endpoint:subscription.endpoint,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth}};
-        all[key] = { subscription:device, revision:crypto.randomUUID(), accessMode:'username',username:name, at: now() };
+        all[key] = { subscription:device, basePath, revision:crypto.randomUUID(), accessMode:'username',username:name, at: now() };
         store.save('subscriptions', all); return json(res, 200, { ok: true });
       }
       if (p === '/api/subscriptions' && req.method === 'DELETE') {
@@ -217,7 +217,7 @@ export function createHandoverServer(options = {}) {
         if (data.username !== name || (data.accessMode !== undefined && data.accessMode !== 'username')) fail(400, '请求用户名或模式不一致');
         if (!validId(data.id) || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
         const existing = store.get(data.id), creationHash = hash(JSON.stringify(data));
-        if (existing) { if (!usernameRecord(existing) || existing.username !== name) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${publicUrl.origin}/grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
+        if (existing) { if (!usernameRecord(existing) || existing.username !== name) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${origin}${basePath}grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
         const created = now();
         let state = { topic: data.topic, intent: data.context || '', project: data.source.project || '', created, doc: '', agent: { status: 'waiting', handled: 0, since: created }, questions: [], terms: [] };
         const questions = data.questions?.length ? data.questions : [{ id: 'q1', round: 1, title: data.topic, body: data.context || '', options: data.options || [], rec: {} }];
@@ -225,7 +225,7 @@ export function createHandoverServer(options = {}) {
         state = applyPatch(state, { questions }, created); validateState(state);
         const page = customPage(data.page);
         const r = { id: data.id, kind: data.kind, source: data.source, accessMode:'username', username:name, creationHash, created, updated: created, status: 'waiting', awaitingReply: false, userAttentionVersion: 1, state, events: [], ...(page ? { page } : {}) };
-        store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${publicUrl.origin}/grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
+        store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${origin}${basePath}grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
       }
       const api = p.match(/^\/api\/requests\/([A-Za-z0-9_-]{8,100})(?:\/(wait|ack|visual|cancel))?$/);
       if (api) {
@@ -268,11 +268,11 @@ export function createHandoverServer(options = {}) {
       const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback|cancel)?$/);
       if (grill) {
         let r = store.get(grill[1]); requireRequestUser(req, r);
-        if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id) : page(r), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
+        if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? shellHtml(fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id), basePath) : page(r, basePath), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }
         if (req.method === 'GET' && grill[2] === 'content') {
           if (!r.page) fail(404, '此请求没有自定义页面');
-          return bytes(res, 200, customContent(r.page.html, fs.readFileSync(path.join(ROOT, 'web/custom-sdk.js'), 'utf8'), secure ? publicUrl.origin : actualOrigin()), 'text/html; charset=utf-8', { 'Content-Security-Policy': customCsp });
+          return bytes(res, 200, customContent(r.page.html, fs.readFileSync(path.join(ROOT, 'web/custom-sdk.js'), 'utf8'), origin), 'text/html; charset=utf-8', { 'Content-Security-Policy': customCsp });
         }
         if (req.method === 'POST' && grill[2] === 'feedback') {
           const data = await body(req); if (!validId(data.submissionId)) fail(400, '缺少提交身份');
@@ -309,10 +309,17 @@ export function createHandoverServer(options = {}) {
         }
       }
       const staticFiles = { '/custom.js': ['custom.js', 'text/javascript; charset=utf-8'], '/custom.css': ['custom.css', 'text/css'], '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/navigation.js': ['navigation.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css'], '/grill.css': ['grill.css', 'text/css'], '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'], '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'], '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'], '/icons/icon.svg': ['icons/icon.svg', 'image/svg+xml'] };
+      staticFiles['/paths.js'] = ['paths.js', 'text/javascript; charset=utf-8'];
       if (['GET', 'HEAD'].includes(req.method) && Object.hasOwn(staticFiles, p)) {
         const [file, type] = staticFiles[p]; let content = req.method === 'HEAD' ? '' : fs.readFileSync(path.join(ROOT, 'web', file));
-        if (p === '/sw.js') content = content.toString().replace('__HANDOVER_BUILD__', hash(version).slice(0, 16));
-        return bytes(res, 200, content, type, { 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'", ...(p === '/sw.js' ? { 'Service-Worker-Allowed': '/' } : {}) });
+        if (req.method !== 'HEAD' && p === '/') content = shellHtml(content.toString(), basePath);
+        if (req.method !== 'HEAD' && p === '/manifest.webmanifest') {
+          const manifest = JSON.parse(content); for (const key of ['id', 'scope', 'start_url']) manifest[key] = basePath;
+          for (const icon of manifest.icons) icon.src = basePath + icon.src.slice(1);
+          content = JSON.stringify(manifest);
+        }
+        if (p === '/sw.js') content = content.toString().replace('__HANDOVER_BUILD__', hash(version).slice(0, 16)).replace("const BASE = '/';", `const BASE = ${JSON.stringify(basePath)};`);
+        return bytes(res, 200, content, type, { 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'", ...(p === '/sw.js' ? { 'Service-Worker-Allowed': basePath } : {}) });
       }
       fail(404, '未找到');
     } catch (e) {

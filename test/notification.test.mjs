@@ -12,13 +12,13 @@ function client(id, url = origin + '/?username=Xpy') {
     async focus() { this.focuses++; return this; },
   };
 }
-function worker(clients = [], opened = client('opened')) {
+function worker(clients = [], opened = client('opened'), basePath = '/') {
   const events = {}, notifications = [], openings = [];
   const self = { location: { origin }, addEventListener: (name, handler) => { events[name] = handler; },
     clients: { matchAll: async () => clients, openWindow: async (url) => { openings.push(url); return opened; } },
     registration: { showNotification: async (title, options) => notifications.push({ title, options }) },
   };
-  vm.runInNewContext(fs.readFileSync(new URL('../web/sw.js', import.meta.url), 'utf8'), { self, URL });
+  vm.runInNewContext(fs.readFileSync(new URL('../web/sw.js', import.meta.url), 'utf8').replace("const BASE = '/';", `const BASE = ${JSON.stringify(basePath)};`), { self, URL });
   events.message({data:{type:'handover:push-user',username:'Xpy'},source:{},waitUntil(){}});
   const click = async (data) => {
     let done;
@@ -27,6 +27,27 @@ function worker(clients = [], opened = client('opened')) {
   };
   return { events, notifications, openings, click };
 }
+
+test('子路径通知保留问题和用户名，不导航其他服务窗口或拦截其他路径', async () => {
+  const unrelated=client('other-service',origin+'/?username=Xpy'), home=client('home',origin+'/handover/?username=Xpy');
+  const w=worker([unrelated,home],client('opened'),'/handover/');
+  await w.click({requestId:'request-12345678',username:'Xpy'});
+  assert.deepEqual(home.navigations,[origin+'/handover/grill/request-12345678/?username=Xpy']);assert.equal(unrelated.navigations.length,0);
+  await w.click({url:'/grill/request-12345678/?username=Xpy'});assert.equal(home.navigations.length,1);
+  let intercepted=false;
+  w.events.fetch({request:{url:origin+'/another-app/',method:'GET',mode:'navigate'},respondWith(){intercepted=true;}});assert.equal(intercepted,false);
+  let done;
+  w.events.push({data:{json:()=>({requestId:'request-87654321',username:'Xpy'})},waitUntil:p=>{done=p;}});await done;
+  assert.equal(w.notifications[0].options.data.url,'/handover/grill/request-87654321/?username=Xpy');assert.equal(w.notifications[0].options.icon,'/handover/icons/icon-192.png');
+});
+
+test('子路径 Service Worker 更新只清理自己的公开缓存', async () => {
+  const events={},deleted=[];
+  const self={location:{origin},addEventListener:(name,fn)=>{events[name]=fn;},clients:{claim:async()=>{}}};
+  const caches={keys:async()=>['another-service-cache','handover-ui-%2F-old','handover-ui-%2Fhandover%2F-old'],delete:async key=>deleted.push(key)};
+  vm.runInNewContext(fs.readFileSync(new URL('../web/sw.js',import.meta.url),'utf8').replace("const BASE = '/';", 'const BASE = "/handover/";'),{self,caches,URL});
+  let done;events.activate({waitUntil:p=>{done=p;}});await done;assert.deepEqual(deleted,['handover-ui-%2Fhandover%2F-old']);
+});
 
 test('点击通知优先打开对应问题的已有窗口', async () => {
   const home = client('home'), question = client('question', target);

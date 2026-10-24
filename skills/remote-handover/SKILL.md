@@ -13,6 +13,8 @@ description: Agent 需要本人反馈、求助、判断或人工交接时，通�
 
 ## 选择请求类型
 
+目标服务器地址可以包含 `/handover/` 部署路径；沿用 sibling 的完整地址配置和恢复规则，勿去掉路径或为切换入口重复创建请求。
+
 已经拥有自己的 HTML 审核页面和 JSON 数据格式时，按 sibling 的[自定义页面契约](../grill-with-ui/references/custom-pages.md)接入。先探测能力，远程不可用时保留原 HTML／JSON；收到 `type:"feedback"` 后校验并记录原始 `payload`，再确认消费，不将其当作普通选项答案。
 
 - **feedback**：请本人检查已有内容或结果，给出修改意见。提供实际结果、必要的访问链接、希望检查的方面和可操作的选项。

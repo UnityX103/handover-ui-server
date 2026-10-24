@@ -20,7 +20,7 @@ async function api(path, data, method = 'POST') {
   if ((!username || mismatch())) throw new Error('请先明确登录目标用户名');
   if (!['/api/me','/api/requests','/api/subscriptions'].includes(path)) throw new Error('用户名模式不提供登录或设备管理权限');
   const headers = {'X-Handover-Username':username};
-  const response = await fetch(path, data === undefined ? {cache:'no-store',headers} : {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const response = await fetch(window.HandoverPaths.url(path), data === undefined ? {cache:'no-store',headers} : {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(data)});
   const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error || '连接失败'),{status:response.status}); return result;
 }
 const unreadSnapshot = () => requests.map(r=>({id:r.id,version:r.userAttentionVersion||1,updated:r.updated||r.created,waiting:!['completed','cancelled'].includes(r.status)&&waitingFor(r)==='user'}));
@@ -31,14 +31,14 @@ function render() {
   const list = requests.filter((r) => (kind === 'all' || r.kind === kind) && (status === 'all' || (status === 'waiting' || status === 'sent' ? !['completed','cancelled'].includes(r.status) && waitingFor(r) === (status === 'sent' ? 'agent' : 'user') : status === 'open' ? !['completed','cancelled'].includes(r.status) : ['completed','cancelled'].includes(r.status))) && (!search || [r.topic,r.source.session,r.source.project].join(' ').toLowerCase().includes(search)));
   $('requests').innerHTML = list.length ? list.map((r) => {
     const project = (r.source.project || '').split(/[\\/]/).filter(Boolean).pop() || '未命名项目';
-    return `<a class="request" href="/grill/${encodeURIComponent(r.id)}/${esc(userQuery)}"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(['completed','cancelled'].includes(r.status) ? states[r.status] : waitingFor(r)==='agent'?'已发送，等待回复':'待回答')}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
+    return `<a class="request" href="${window.HandoverPaths.url(`/grill/${encodeURIComponent(r.id)}/${esc(userQuery)}`)}"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(['completed','cancelled'].includes(r.status) ? states[r.status] : waitingFor(r)==='agent'?'已发送，等待回复':'待回答')}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
   }).join('') : '<div class="empty">这里暂时没有请求。<br>Agent 发起问卷、反馈或求助后，会显示在这里。</div>';
   if (username) void window.HandoverUnread.sync(username,unreadSnapshot()).catch(()=>{});
 }
 async function refresh() {
   if (leavingUsername) return;
   if ((!username || mismatch())) return;
-  if ((storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); return; }
+  if ((storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace(window.HandoverPaths.url('/')); return; }
   if (loading) return; loading = true; const name = username, version = generation;
   try {
     const me = await api('/api/me'); if (!current(name,version)) return; user = me; $('version').textContent = user.version === 'development' ? '开发环境' : user.version.slice(0,12);
@@ -50,7 +50,7 @@ async function refresh() {
     if (available) {
       const list = await api('/api/requests'); if (!current(name,version)) return; requests = list.requests; render();
       const pending = new URLSearchParams(location.search).get('request');
-      if (pending && /^[A-Za-z0-9_-]{8,100}$/.test(pending)) location.replace(`/grill/${pending}/${userQuery}`);
+      if (pending && /^[A-Za-z0-9_-]{8,100}$/.test(pending)) location.replace(window.HandoverPaths.url(`/grill/${pending}/${userQuery}`));
     }
     $('connection').textContent = '● 已连接'; message();
   } catch (error) { if (!current(name,version)) return; $('connection').textContent = '○ 连接中断'; message('当前无法连接服务器，已填写的内容会保留。' + (navigator.onLine ? '' : '请恢复网络后重试。')); }
@@ -76,7 +76,7 @@ $('username-form').onsubmit = async (event) => {
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),10000);
   try {
     await window.HandoverPush.login(value,async()=>{
-    const response = await fetch('/api/me',{cache:'no-store',headers:{'X-Handover-Username':value},signal:controller.signal});
+    const response = await fetch(window.HandoverPaths.url('/api/me'),{cache:'no-store',headers:{'X-Handover-Username':value},signal:controller.signal});
     const result = await response.json();
     if (attempt !== generation || storedUsername()) return;
     if (!response.ok || result.mode !== 'username' || result.username !== value) throw new Error('目标用户名连接失败，请重试');
@@ -88,7 +88,7 @@ $('username-form').onsubmit = async (event) => {
     await window.HandoverUnread.identity(value).catch(()=>{});
     const next = new URLSearchParams({username:value});
     const request = params.get('request'); if (request && /^[A-Za-z0-9_-]{8,100}$/.test(request)) next.set('request',request);
-    location.assign('/?' + next);
+    location.assign(window.HandoverPaths.url('/?') + next);
     });
   } catch { if (attempt === generation) message('连接失败，尚未登录或保存用户名；请检查网络后重试。'); }
   finally { clearTimeout(timer); if (attempt === generation && button) button.disabled = false; }
@@ -98,10 +98,10 @@ $('username-logout').onclick = async () => {
   const name = username; generation++; leavingUsername = true; $('username-logout').disabled = true;
   try {
     await window.HandoverPush.clear(name,initialIdentityEpoch);
-    if (storedUsername() !== name || identityEpoch() !== initialIdentityEpoch) { location.replace('/'); return; }
+    if (storedUsername() !== name || identityEpoch() !== initialIdentityEpoch) { location.replace(window.HandoverPaths.url('/')); return; }
     localStorage.setItem('handover:identity-epoch',String(Number(identityEpoch())+1));localStorage.setItem('handover:username','');sessionStorage.removeItem('handover:username');
     await window.HandoverUnread.identity(null).catch(()=>{});
-    username = null; requests = []; user = null; $('settings-toggle').hidden = true; $('settings').hidden = true; $('requests').innerHTML = ''; $('workspace').hidden = true; $('username').value = ''; $('username-panel').hidden = false; $('username-logout').hidden = true; $('username-status').textContent = ''; location.replace('/');
+    username = null; requests = []; user = null; $('settings-toggle').hidden = true; $('settings').hidden = true; $('requests').innerHTML = ''; $('workspace').hidden = true; $('username').value = ''; $('username-panel').hidden = false; $('username-logout').hidden = true; $('username-status').textContent = ''; location.replace(window.HandoverPaths.url('/'));
   } catch (error) { message(error.message || '无法解除设备绑定，尚未退出，请重试'); }
   finally { leavingUsername = false; $('username-logout').disabled = false; }
 };
@@ -164,15 +164,15 @@ $('push').onclick = () => task($('push'),async () => {
   await window.HandoverPush.bind(name,operation);
 });
 async function init() {
-  const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.register('/sw.js').catch(()=>null) : null;
+  const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.register(window.HandoverPaths.url('/sw.js'), {scope:window.HandoverPaths.base}).catch(()=>null) : null;
   if (username && registration?.active && window.HandoverPush.marker()?.username !== username) {
     try { await window.HandoverPush.transaction(async()=>{if(storedUsername()===username && identityEpoch()===initialIdentityEpoch && window.HandoverPush.marker()?.username!==username)await window.HandoverPush.active(null);}); } catch {}
   }
   if (location.hash) history.replaceState(null,'',location.pathname+location.search);
   await refresh();
 }
-window.addEventListener('storage',(event)=>{if (['handover:username','handover:identity-epoch'].includes(event.key)) {generation++;$('workspace').hidden=true;$('requests').innerHTML='';location.replace('/');}});
-window.addEventListener('pageshow',()=>{ if ((storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); } });
+window.addEventListener('storage',(event)=>{if (['handover:username','handover:identity-epoch'].includes(event.key)) {generation++;$('workspace').hidden=true;$('requests').innerHTML='';location.replace(window.HandoverPaths.url('/'));}});
+window.addEventListener('pageshow',()=>{ if ((storedUsername() !== username || identityEpoch() !== initialIdentityEpoch)) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace(window.HandoverPaths.url('/')); } });
 window.addEventListener('online',refresh);
 window.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 setInterval(()=>{if(!document.hidden && user?.mode === 'username')refresh();},10000);

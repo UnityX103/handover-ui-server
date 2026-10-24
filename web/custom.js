@@ -5,10 +5,10 @@
   const retry = document.querySelector('#retry'), cancel = document.querySelector('#cancel-request');
   const identityEpoch=localStorage.getItem('handover:identity-epoch')||'0';
   const username = new URLSearchParams(location.search).get('username');
-  if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) { location.replace('/?' + new URLSearchParams({username,request:id})); return; }
+  if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) { location.replace(window.HandoverPaths.url('/?') + new URLSearchParams({username,request:id})); return; }
   const query = username === null ? '' : '?' + new URLSearchParams({username});
-  const home = username === null ? '/' : '/' + query; document.querySelector('header a').href = home;
-  const route = `/grill/${id}/`, channel = crypto.randomUUID(), storageKey = `handover:custom:${id}${query}`;
+  const home = window.HandoverPaths.url(username === null ? '/' : '/' + query); document.querySelector('header a').href = home;
+  const route = window.HandoverPaths.url(`/grill/${id}/`), channel = crypto.randomUUID(), storageKey = `handover:custom:${id}${query}`;
   let revision = 0, pending, handled = 0, closed = false, submitting = false, cancelled = false;
   try { pending = JSON.parse(localStorage.getItem(storageKey)); revision = pending?.currentRevision || 0; } catch {}
   const persist = () => { try { if (pending) localStorage.setItem(storageKey, JSON.stringify({ ...pending, currentRevision: revision })); else localStorage.removeItem(storageKey); } catch {} };

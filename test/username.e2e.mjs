@@ -7,9 +7,10 @@ import crypto from 'node:crypto';
 import { createHandoverServer } from '../src/server.mjs';
 const { chromium } = await import(process.env.PLAYWRIGHT_PKG || 'playwright');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(),'username-browser-'));
-const app = createHandoverServer({dataDir:dir,agentToken:undefined,adminToken:crypto.randomBytes(32).toString('hex'),publicUrl:'http://127.0.0.1:0',port:0,disablePush:true});
+const mount = process.env.HANDOVER_TEST_BASE_PATH || '';
+const app = createHandoverServer({dataDir:dir,agentToken:undefined,adminToken:crypto.randomBytes(32).toString('hex'),publicUrl:'http://127.0.0.1:0'+mount,port:0,disablePush:true});
 await new Promise((resolve)=>app.server.listen(0,'127.0.0.1',resolve));
-const base = `http://127.0.0.1:${app.server.address().port}`;
+const base = `http://127.0.0.1:${app.server.address().port}${mount}`;
 const browser = await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
 const context = await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
 const page = await context.newPage(), errors = [], urls = [];
@@ -27,7 +28,7 @@ try {
  await page.goto(base+'/?username=Xpy');
  assert.equal(await page.locator('#username').inputValue(),'');
  await page.locator('#username').fill('Xpy');await page.locator('#username-form button').click();
- await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).waitFor();
+ await page.locator(`a.request[href="${mount}/grill/${a.id}/?username=Xpy"]`).waitFor();
  const revisited=await context.newPage();await revisited.goto(base+'/?username=Xpy');await revisited.locator('a.request').waitFor();assert.equal(await revisited.locator('#username-panel').isVisible(),false);await revisited.close();
  assert.equal(await page.locator('a.request').count(),1);assert.equal(await page.locator('#settings-toggle').isVisible(),true);await fit();
  await page.locator('a.request').click();await page.locator('#free').fill('Synthetic answer');await page.locator('#stage-text').click();await page.locator('#send').click();
@@ -59,8 +60,14 @@ try {
  assert.equal(customCancellation.status,'cancelled');assert.deepEqual(customCancellation.events,[]);await fit();
  await page.goto(base+'/?username=Xpy');
  assert.equal((await context.cookies()).length,0,'public browser must receive no owner cookie');
- assert.ok(!urls.some((url)=>/^\/api\/(login|browser-tickets|subscriptions|pairing-tickets)/.test(url)),JSON.stringify(urls));
+ assert.ok(!urls.some((url)=>/^\/api\/(login|browser-tickets|subscriptions|pairing-tickets)/.test(url.slice(mount.length))),JSON.stringify(urls));
+ assert.ok(urls.every(url=>url.startsWith(mount+'/')),JSON.stringify(urls));
+ assert.equal(await page.evaluate(async()=> (await navigator.serviceWorker.ready).scope),base+'/');
  await page.reload();assert.equal(await page.locator('#username-panel').isVisible(),false);
  await page.locator('#username-logout').click();await page.waitForURL(base+'/');assert.equal(await page.locator('#username').inputValue(),'');
+ await page.goto(base+`/grill/${cancelledQuestion.id}/?username=Xpy`);
+ await page.waitForURL(new RegExp('/'+(mount?mount.slice(1)+'/':'')+'\\?request='+cancelledQuestion.id+'&username=Xpy$'));
+ await page.locator('#username').fill('Xpy');await page.locator('#username-form button').click();
+ await page.waitForURL(base+`/grill/${cancelledQuestion.id}/?username=Xpy`);await fit();
  assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question/custom saved immediate scoped return before ack, custom JSON bridge, questionnaire/custom web cancellation, retained draft, no owner routes/cookie');
 } finally {await browser.close();app.server.closeAllConnections();await new Promise((resolve)=>app.server.close(resolve));fs.rmSync(dir,{recursive:true,force:true});}

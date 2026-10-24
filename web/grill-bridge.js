@@ -2,12 +2,12 @@ function handoverRequireUsername() {
   const target = new URLSearchParams(location.search).get('username');
   if (target === null) return;
   let current; try { current = localStorage.getItem('handover:username'); } catch {}
-  if (current !== target) { location.replace('/?' + new URLSearchParams({username:target,request:location.pathname.split('/')[2]})); throw new Error('请先登录匹配的用户名'); }
+  if (current !== target) { location.replace(window.HandoverPaths.url('/?') + new URLSearchParams({username:target,request:window.HandoverPaths.requestId()})); throw new Error('请先登录匹配的用户名'); }
 }
 handoverRequireUsername();
 const handoverUsername = new URLSearchParams(location.search).get('username');
 const handoverScope = location.pathname + (handoverUsername === null ? '' : '?' + new URLSearchParams({username:handoverUsername}));
-const handoverHome = handoverUsername === null ? '/' : '/?' + new URLSearchParams({username:handoverUsername});
+const handoverHome = window.HandoverPaths.url(handoverUsername === null ? '/' : '/?' + new URLSearchParams({username:handoverUsername}));
 const handoverIdentityEpoch=localStorage.getItem('handover:identity-epoch')||'0';
 const handoverSessionActive = () => { if (handoverUsername === null) return true; try { return localStorage.getItem('handover:username') === handoverUsername && (localStorage.getItem('handover:identity-epoch')||'0')===handoverIdentityEpoch; } catch { return false; } };
 // The upstream post function is hoisted; a second gesture must not start another POST.
@@ -81,7 +81,7 @@ function handoverReturnWhenAcknowledged(state) {
   handoverReturning = true;
   location.replace(handoverHome);
 }
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register(window.HandoverPaths.url('/sw.js'), {scope:window.HandoverPaths.base}).catch(() => {});
 document.addEventListener('DOMContentLoaded', () => {
   const home = document.querySelector('.home-link'); if (home) home.href = handoverHome;
   const receipt = document.createElement('span'); receipt.id = 'handover-receipt'; receipt.hidden = true; receipt.setAttribute('role', 'status');

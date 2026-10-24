@@ -7,6 +7,7 @@
 应用通过 systemd 的 `EnvironmentFile` 注入配置；参考根目录 `.env.example` 的变量名。`.env.example` 不含可用凭据，也不由应用自动载入。
 
 - `HANDOVER_PUBLIC_URL`：实际 HTTPS 站点入口，监听公网端口 8024。
+- `HANDOVER_PUBLIC_ALIASES`：可选的其他完整 HTTPS 入口，多个用逗号分隔，支持 `/handover/` 这样的部署路径。仅列出的 Host 和路径会被接受；内部回环 `/healthz` 继续供发布检查使用。
 - `HANDOVER_HOST`、`HANDOVER_PORT`：内部应用监听地址及端口，默认回环 8025。
 - `HANDOVER_ADMIN_TOKEN`：仍必需的独立随机管理凭据（至少 32 字符）。
 - `HANDOVER_AGENT_TOKEN`：已停用，客户端不使用该值；已有受限环境配置保留归档，不作为用户名，不删除或轮换。
@@ -42,6 +43,16 @@ cat /opt/handover-ui/deployment.json
 首次安装使用 `deploy/bootstrap.py`；实际 HTTPS 入口经环境变量传入，Nginx 模板在安装时渲染，不记录具体部署域名。部署或访问配置有变动时，按用户级规则更新仓库外的端口记录。
 
 ## 手机与 Skill
+
+### 现有 443 反向代理的路径入口
+
+在已存在的 HTTPS 443 `server` 中包含 `deploy/nginx-path.conf`，不要覆盖该虚拟主机的其他 location。它将 `/handover/` 原样代理到回环应用 8025，专用 Webhook 路径转到 8032；不使用删除前缀的 `proxy_pass`。把含 `/handover/` 的实际完整地址加入服务器受限环境文件的 `HANDOVER_PUBLIC_ALIASES`，验证 `nginx -t` 后 reload，仅重启本应用加载环境。
+
+入口启用后，把客户端配置 `serverUrl` / `HANDOVER_SERVER_URL` 设置为完整路径地址。客户端生成的问题链接、返回列表、静态资源、manifest、Service Worker 与通知都保留前缀。既有 8024 handle 继续原地址并访问相同数据，不改写来源或游标；GitHub 已有 8024 Webhook 继续使用，不必改动。
+
+发布时先上线支持子路径的应用，再启用别名与 Nginx 路由。保留外部环境与 Nginx 备份；失败恢复这些配置，不回滚数据。核对新入口的 `/handover/healthz`、页面及资源、用户名 API、问题链接与 PWA scope，同时检查 8024 原入口和 443 其他路径。
+
+端口改变会形成新的浏览器 origin；原 8024 的用户名记忆、PWA 安装和通知订阅仍属于原入口。使用新 443 地址时需在手机重新选择用户名、添加到桌面并主动开启通知，沿用原 VAPID 密钥；不自动搬移订阅或申请权限。
 
 Skill 在 `new`、有效 schema 2 的 `resume`、`home` 前检查仓库 `main`，按确定提交备份、更新后继续。它只更新本机 Skill，服务器仍使用 push webhook 发布。
 
