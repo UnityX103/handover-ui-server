@@ -12,7 +12,7 @@
   <div class="shell">
     <header class="topbar" aria-label="交接操作"><span id="connection" role="status">正在连接</span><span id="username-status" class="sr-only" role="status"></span><div class="tools"><button id="settings-toggle" hidden aria-expanded="false" aria-controls="settings">通知</button><button id="username-logout" type="button" hidden>退出</button></div></header>
     <main>
-      <section id="username-panel" class="panel" aria-label="公开用户名交接"><h2>按用户名处理交接</h2><p>用户名只用于分类，不是身份认证。任何知道用户名的人都可能读取或操作其交接内容。</p><form id="username-form"><label for="username">目标用户名</label><input id="username" maxlength="64" pattern="[A-Za-z0-9_-]{1,64}" required autocomplete="off"><button type="submit">登录用户名</button> <a id="username-cancel" href="/">取消并返回首页</a></form></section>
+      <section id="username-panel" class="panel" aria-label="公开用户名交接"><h2>按用户名处理交接</h2><p>用户名只用于分类，不是身份认证。任何知道用户名的人都可能读取或操作其交接内容。</p><form id="username-form"><label for="username">目标用户名</label><input id="username" maxlength="64" pattern="[A-Za-z0-9_\-]{1,64}" required autocomplete="off"><button type="submit">登录用户名</button> <a id="username-cancel" href="/">取消并返回首页</a></form></section>
       <section id="workspace" hidden>
         <h1 class="sr-only">交接请求</h1><p id="count" class="sr-only">正在读取请求</p><button id="refresh" class="sr-only sr-only-focusable" type="button" aria-label="刷新请求列表">刷新请求列表</button>
         <section id="settings" class="panel" hidden>

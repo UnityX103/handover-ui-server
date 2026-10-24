@@ -328,3 +328,11 @@ test('exploratory POST never subtracts unsent staged answers when a draft change
  let resolve;const h=acceptedQuestion(async()=>new Promise(done=>{resolve=done;}));const posting=h.sandbox.post([{type:'explore',q:'q1'}]);h.sandbox.local.drafts.q1={free:'unsent new draft'};resolve({ok:true,saved:true,seq:1});await posting;
  h.sandbox.handoverReturnWhenAcknowledged({agent:{handled:0}});assert.equal(h.sandbox.local.staged.q1.answer.text,'sent');assert.equal(h.sandbox.local.drafts.q1.free,'unsent new draft');assert.equal(h.destinations.length,0);
 });
+
+test('username HTML pattern compiles with browser Unicode sets and retains allowed names', () => {
+ const html=fs.readFileSync(new URL('../web/index.html',import.meta.url),'utf8');
+ const pattern=html.match(/id="username"[^>]*pattern="([^"]+)"/)[1];
+ const matcher=new RegExp('^(?:'+pattern+')$','v');
+ for(const name of ['Xpy','user-one','user_two','User123'])assert.equal(matcher.test(name),true);
+ for(const name of ['','user/name','user name','a'.repeat(65)])assert.equal(matcher.test(name),false);
+});
