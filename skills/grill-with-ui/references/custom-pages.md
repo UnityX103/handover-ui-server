@@ -32,6 +32,19 @@ if (window.HandoverBridge) {
 
 ## 接收与确认
 
+服务端永久保留已提交的原 JSON 回执；`ack` 仅推进消费游标，不删除反馈。打开同一请求时，外层读取当前页面版本的最近回执，并提供“查看上次已发送的反馈数据”。旧 HTML 不改写，已有回执也不迁移；未支持回填的旧页面仍可从该区域查看原数据。
+
+新页面应注册恢复回调，把原反馈还原到自己的选项和输入框。服务器能力 `customPage.restoreVersion===1` 表示支持恢复；SDK 同时提供 `await HandoverBridge.getFeedback()`，返回含 `seq`、`at`、`feedbackType`、`documentId`、`pageHash`、`payload` 的回执或 `null`。
+
+```js
+window.HandoverBridge?.onRestore?.((payload, receipt) => {
+  // 按本 Skill 的契约核对审核 ID、指纹和字段，再回填控件。
+  restoreOwnForm(payload);
+});
+```
+
+回调可在握手前或后注册，只恢复这一请求及页面版本的已保存数据。恢复不能调用 `submit`、`ack`、合成批准或自动执行业务；不能覆盖本人已经开始的新编辑。未提交草稿继续沿页面自己的保存逻辑。恢复数据由父页面通过受限桥接传入，iframe 不访问父页面 Cookie、存储或网络。
+
 通过远程 Skill 在来源会话前台分段 `wait`，单次最长 30 秒。事件 `type:"feedback"` 携带 `feedbackType`、`documentId`、`pageHash`、原始 `payload` 及请求／来源／连续序号。
 
 先核对身份、反馈类型、固定审核版本及业务 JSON 结构，将原始反馈落盘，处理和记录真实决定，再 `ack` 已处理的最高连续序号。服务不检查资源迁移、测试或其他业务批准含义，不执行 JSON 指令。已保存并不代表已处理；页面收到服务器保存成功回执后立即返回当前用户名列表，不等待 Agent ack，提交期间产生新草稿则保留页面。请求仍显示“已发送，等待回复”，来源 Agent 继续处理并显式 ack。中断保留 handle 和已保存反馈，不代答，不重复落实。

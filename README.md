@@ -36,6 +36,8 @@ Agent 发起请求，自动打开默认浏览器，并在当前回合分段等�
 
 点击通知直接进入对应问题；登录失效时先登录，再自动回到同一题。网页提交答复并收到服务器保存成功回执后立即返回当前用户名的请求列表，不等待来源 Agent ack。列表保留“已发送，等待回复”；页面返回不代表 Agent 已处理。提交失败或提交期间产生新草稿时留在原题并保留内容。
 
+从“已发送，等待回复”重开时，普通问卷从服务器恢复尚未处理的选项与文字；自定义页面读取当前页面版本的最近已发送 JSON，通过恢复回调还原自己的控件。原始反馈始终可在页面上方查看；Agent 确认、浏览器刷新、换设备和服务重启不删除已发送数据。旧自定义 HTML 保持原版本，外层同样提供原 JSON；页面接入恢复回调后，新生成的页面还会自动回填选项。
+
 ## 安装两个 Skill
 
 ```sh
@@ -116,6 +118,9 @@ PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium npm run test:browser
 # 复用上述 Playwright / Chromium 环境，验证子路径下的手机问答与 JSON 页面：
 HANDOVER_TEST_BASE_PATH=/handover node test/username.e2e.mjs
+# 指定两个 Skill 工作区，验证已发送反馈重开、换设备、确认后恢复及资源手动处理数据：
+MIDA_FLOW_PROJECT_ROOT=/absolute/path/flow-workspace \
+MIDA_RESOURCE_PROJECT_ROOT=/absolute/path/resource-workspace npm run test:sent
 ```
 
 测试使用隔离临时目录和虚构来源，不向真实会话伪造答复。测试涵盖上游兼容、认证、来源隔离、幂等、恢复、前台等待、推送调度、Webhook 与回滚；浏览器检查手机/平板布局、多选、草稿、重复提交、用户名会话、旧入口停用和缓存边界。真实手机安装与系统通知许可需在设备上验收。

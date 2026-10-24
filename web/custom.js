@@ -18,6 +18,16 @@
     const data = await response.json(); if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) throw new Error('用户名会话已退出'); if (!response.ok) throw new Error(data.error || '请求失败'); return data;
   };
   const info = await api('bridge');
+  const {lastFeedback} = await api('feedback');
+  if (lastFeedback && (lastFeedback.pageHash !== info.page.pageHash || lastFeedback.documentId !== info.page.documentId || lastFeedback.feedbackType !== info.page.feedbackType)) throw new Error('历史反馈不是本版页面');
+  if (lastFeedback) {
+    const receipt = document.querySelector('#saved-feedback');
+    if (receipt) {
+      receipt.hidden = false;
+      document.querySelector('#saved-feedback-time').textContent = `事件 ${lastFeedback.seq} · ${new Date(lastFeedback.at).toLocaleString()}`;
+      document.querySelector('#saved-feedback-json').textContent = JSON.stringify(lastFeedback.payload, null, 2);
+    }
+  }
   document.querySelector('#title').textContent = info.topic;
   const showCancellation = (current) => {
     cancelled = true; closed = true; cancel.disabled = true; retry.hidden = true;
@@ -47,7 +57,7 @@
   retry.hidden = !pending || !!pending.seq;
   retry.addEventListener('click', () => { if (!submitting && pending) flush().catch((error) => { status.textContent = error.message; }); });
   const tell = (message) => frame.contentWindow.postMessage({ ...message, channel }, '*');
-  frame.addEventListener('load', () => tell({ type: 'handover:init' }));
+  frame.addEventListener('load', () => tell({ type: 'handover:init', lastFeedback }));
   window.addEventListener('message', async (event) => {
     if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) return;
     const data = event.data;
@@ -67,7 +77,7 @@
     } catch (error) { if (!cancelled) status.textContent = error.message; result({ ok: false, error: error.message }); }
     finally { submitting = false; }
   });
-  frame.src = route + 'content' + query; status.textContent = pending ? '恢复提交状态，等待来源确认' : '请在下方页面填写';
+  frame.src = route + 'content' + query; status.textContent = lastFeedback ? '此前发送的反馈已保存，可在上方查看。' : pending ? '恢复提交状态，等待来源确认' : '请在下方页面填写';
   if (info.status === 'cancelled') showCancellation(info);
   const poll = async () => {
     if (closed) return;

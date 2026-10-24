@@ -1,23 +1,38 @@
 (() => {
   'use strict';
   const origin = window.__HANDOVER_BRIDGE__.origin;
-  let channel, resolveReady;
+  let channel, resolveReady, lastFeedback, edited = false;
+  const restoreListeners = new Set();
+  const copy = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  const restore = (listener) => { if (edited) return; try { listener(copy(lastFeedback.payload), copy(lastFeedback)); } catch (error) { console.error('handover_restore_failed', error.message); } };
   const pending = new Map();
   const ready = new Promise((resolve) => { resolveReady = resolve; });
   const send = (message) => parent.postMessage({ ...message, channel }, origin);
   window.addEventListener('message', (event) => {
     if (event.source !== parent || event.origin !== origin) return;
     const data = event.data;
-    if (data?.type === 'handover:init' && typeof data.channel === 'string') { channel = data.channel; resolveReady(); return; }
+    if (data?.type === 'handover:init' && typeof data.channel === 'string') {
+      if (channel) return;
+      channel = data.channel; lastFeedback = data.lastFeedback || null;
+      if (lastFeedback) for (const listener of restoreListeners) restore(listener);
+      if (edited) send({type:'handover:dirty'});
+      resolveReady(); return;
+    }
     if (!channel || data?.channel !== channel || data.type !== 'handover:result') return;
     const operation = pending.get(data.messageId);
     if (!operation) return;
     clearTimeout(operation.timer); pending.delete(data.messageId);
     if (data.ok) operation.resolve(data); else operation.reject(new Error(data.error || '提交失败，可重试或导出 JSON'));
   });
-  const dirty = () => { if (channel) send({ type: 'handover:dirty' }); };
+  const dirty = () => { edited = true; if (channel) send({ type: 'handover:dirty' }); };
   window.HandoverBridge = Object.freeze({
     version: 1, markDirty: dirty,
+    async getFeedback() { await ready; return copy(lastFeedback); },
+    onRestore(listener) {
+      if (typeof listener !== 'function') throw new Error('需要反馈恢复函数');
+      restoreListeners.add(listener); if (lastFeedback) restore(listener);
+      return () => restoreListeners.delete(listener);
+    },
     async submit(payload) {
       if (!payload || typeof payload !== 'object') throw new Error('请提交 JSON 对象或数组');
       let timer;

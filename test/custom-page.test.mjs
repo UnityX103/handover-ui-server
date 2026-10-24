@@ -65,13 +65,25 @@ test('原样 JSON 按来源回传、重试幂等，记录后才确认且重启�
   const events = (await waiting).body.events;
   assert.equal(events[0].type, 'feedback'); assert.deepEqual(events[0].payload, payload);
   assert.equal(events[0].documentId, r.page.documentId);
+  const saved = (await f.call(`/grill/${r.id}/feedback`, undefined, {cookie:f.cookie})).body.lastFeedback;
+  assert.deepEqual(saved.payload,payload);assert.equal(saved.seq,1);assert.equal(saved.pageHash,info.page.pageHash);
+  assert.equal((await f.call(`/grill/${r.id}/feedback`, undefined, {username:'Other'})).status,404);
+  assert.equal((await f.call(`/grill/${r.id}/feedback`)).status,403);
+  assert.equal((await f.call(`/grill/${other.id}/feedback`, undefined, {cookie:f.cookie})).body.lastFeedback,null);
+  assert.equal(Object.hasOwn(saved,'sourceSession'),false);assert.equal(Object.hasOwn(saved,'digest'),false);
   assert.equal((await f.scoped(other, '/wait?timeout=0')).body.events.length, 0);
   assert.equal((await f.scoped(r, '', undefined, { source: other.source.session })).status, 403);
   assert.equal((await f.scoped(r, '/wait?timeout=0')).body.events.length, 1);
   await f.scoped(r, '/ack', { seq: 1 });
   assert.equal((await f.scoped(r, '/wait?timeout=0')).body.events.length, 0);
+  assert.deepEqual((await f.call(`/grill/${r.id}/feedback`, undefined, {cookie:f.cookie})).body.lastFeedback,saved);
   const restored = createHandoverServer({ dataDir: f.dir, agentToken, adminToken, publicUrl: 'http://127.0.0.1:0', disablePush: true });
   assert.deepEqual(restored.store.get(r.id).events[0].payload, payload);
+  await new Promise(resolve=>restored.server.listen(0,'127.0.0.1',resolve));
+  try {
+    const response=await fetch(`http://127.0.0.1:${restored.server.address().port}/grill/${r.id}/feedback?username=Xpy`);
+    assert.equal(response.headers.get('cache-control'),'no-store');assert.deepEqual((await response.json()).lastFeedback,saved);
+  } finally {restored.server.closeAllConnections();await new Promise(resolve=>restored.server.close(resolve));}
   await f.scoped(r, '', { finished: { doc: '' } }, { method: 'PATCH' });
   assert.equal((await send(data)).body.handled, true);
   assert.equal((await send({ ...data, submissionId: crypto.randomUUID() })).status, 409);

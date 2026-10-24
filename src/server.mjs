@@ -9,7 +9,7 @@ import webpush from 'web-push';
 import { applyPatch, validateState, validateAxesChange } from '../server.mjs';
 import { Store, atomic, hash, equal, now, validId } from './store.mjs';
 import { publicEndpoint, requestMount, shellHtml } from './public-paths.mjs';
-import { customLimits, customPage, pageInfo, validateFeedback, customCsp, customContent } from './custom-page.mjs';
+import { customLimits, customPage, pageInfo, savedFeedback, validateFeedback, customCsp, customContent } from './custom-page.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kinds = ['questionnaire', 'feedback', 'help'];
@@ -124,7 +124,7 @@ export function createHandoverServer(options = {}) {
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); if (!j || typeof j !== \"object\" || Array.isArray(j)) j = {}; j.ok = !!(r.ok && j.ok && j.saved === true && Number.isSafeInteger(j.seq) && j.seq > 0 && handoverSessionActive()); handoverSubmissionReceived(j, actions, r.ok);');
-    html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  handoverReturnWhenAcknowledged(S);');
+    html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  if (Array.isArray(S.submissions)) local.pending = S.submissions;\n  handoverReturnWhenAcknowledged(S);');
     html = html.replace('if (S && S.finished) { b.className', 'if (S && S.cancellation) { b.className = "show done"; b.textContent = "本次回答已取消；保留已有内容，不代表同意继续或已写入设计文档。"; return; }\n  if (S && S.finished) { b.className');
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
@@ -270,6 +270,7 @@ export function createHandoverServer(options = {}) {
         let r = store.get(grill[1]); requireRequestUser(req, r);
         if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? shellHtml(fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id), basePath) : page(r, basePath), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }
+        if (req.method === 'GET' && grill[2] === 'feedback') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, {requestId:r.id, lastFeedback:savedFeedback(r), handled:r.state.agent.handled || 0}); }
         if (req.method === 'GET' && grill[2] === 'content') {
           if (!r.page) fail(404, '此请求没有自定义页面');
           return bytes(res, 200, customContent(r.page.html, fs.readFileSync(path.join(ROOT, 'web/custom-sdk.js'), 'utf8'), origin), 'text/html; charset=utf-8', { 'Content-Security-Policy': customCsp });
@@ -289,7 +290,7 @@ export function createHandoverServer(options = {}) {
           await body(req); r = store.get(grill[1]); requireRequestUser(req, r);
           return json(res, 200, {ok:true, ...publicRequest(cancelRequest(r, 'user'))});
         }
-        if (req.method === 'GET' && grill[2] === 'state') return json(res, 200, {...r.state, ...(r.cancellation ? {cancellation:r.cancellation} : {})});
+        if (req.method === 'GET' && grill[2] === 'state') return json(res, 200, {...r.state, submissions:r.events.filter((e) => e.type === 'send' && e.seq > (r.state.agent.handled || 0)).map(({seq,at,actions}) => ({seq,at,actions})), ...(r.cancellation ? {cancellation:r.cancellation} : {})});
         if (req.method === 'GET' && grill[2] === 'listener') return json(res, 200, { listening: Date.now() - (listenerTimes.get(r.id) || 0) <= 45000, pending: r.events.length - (r.state.agent.handled || 0), handled: r.state.agent.handled || 0 });
         if (req.method === 'GET' && grill[2] === 'visual') {
           const data = store.all(`visuals/${r.id}`); if (!data.html) fail(404, '暂无图解');

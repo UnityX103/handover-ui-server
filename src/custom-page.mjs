@@ -1,6 +1,6 @@
 import { hash } from './store.mjs';
 
-export const customLimits = Object.freeze({ version: 1, maxHtmlBytes: 4 * 1024 * 1024, maxFeedbackBytes: 512 * 1024 });
+export const customLimits = Object.freeze({ version: 1, restoreVersion: 1, maxHtmlBytes: 4 * 1024 * 1024, maxFeedbackBytes: 512 * 1024 });
 const invalid = (message) => { throw Object.assign(new Error(message), { status: 400 }); };
 export function customPage(value) {
   if (value === undefined) return undefined;
@@ -9,6 +9,12 @@ export function customPage(value) {
   return { version: 1, html: value.html, feedbackType: value.feedbackType, documentId: value.documentId, pageHash: hash(value.html) };
 }
 export const pageInfo = (r) => r.page ? { version: 1, feedbackType: r.page.feedbackType, documentId: r.page.documentId, pageHash: r.page.pageHash } : undefined;
+export function savedFeedback(r) {
+  const event = r.events.findLast((e) => e.type === 'feedback' && e.pageHash === r.page?.pageHash && e.documentId === r.page?.documentId && e.feedbackType === r.page?.feedbackType);
+  if (!event) return null;
+  const {seq, at, submissionId, feedbackType, documentId, pageHash, payload} = event;
+  return {seq, at, submissionId, feedbackType, documentId, pageHash, payload};
+}
 export function validateFeedback(data, r) {
   if (!r.page || data.feedbackType !== r.page.feedbackType || data.pageHash !== r.page.pageHash) invalid('反馈类型或页面版本不匹配');
   if (!data.payload || typeof data.payload !== 'object' || Buffer.byteLength(JSON.stringify(data.payload)) > customLimits.maxFeedbackBytes) invalid('反馈应为大小受限的 JSON 对象或数组');

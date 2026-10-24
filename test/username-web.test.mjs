@@ -108,7 +108,7 @@ test('custom page scopes metadata, iframe, persisted replies and return URL', as
   };
   vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),withPaths(sandbox));
   await new Promise(setImmediate);
-  assert.deepEqual(calls,['/grill/test-request/bridge?username=Xpy','/grill/test-request/bridge?username=Xpy']);
+  assert.deepEqual(calls,['/grill/test-request/bridge?username=Xpy','/grill/test-request/feedback?username=Xpy','/grill/test-request/bridge?username=Xpy']);
   assert.equal(nodes.get('#page').src,'/grill/test-request/content?username=Xpy');
   assert.equal(nodes.get('header a').href,'/?username=Xpy');
 });
@@ -325,7 +325,7 @@ test('accepted questionnaire callback cannot navigate after logout or external c
 async function customSubmitFixture() {
  const nodes=new Map(),stored=new Map([['handover:username','Xpy']]),events={},timers=[],destinations=[],posts=[];let finish;
  for(const selector of ['meta[name="handover-request"]','#page','#status','#retry','#cancel-request','#title','header a'])nodes.set(selector,{content:'test-request',listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},contentWindow:{postMessage(){}}});
- const sandbox={URLSearchParams,TextEncoder,crypto:{randomUUID:()=> 'channel-test'},document:{querySelector:key=>nodes.get(key)},location:{search:'?username=Xpy',replace:url=>destinations.push(url)},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},window:{addEventListener:(name,fn)=>{events[name]=fn;},confirm:()=>true},setTimeout:(fn,delay)=>timers.push({fn,delay}),fetch:async(url,options)=>{if(url.includes('/feedback')){posts.push(JSON.parse(options.body));return new Promise(resolve=>{finish=resolve;});}return{ok:true,json:async()=>({topic:'synthetic',status:'waiting',handled:0,page:{feedbackType:'test',pageHash:'hash'},maxFeedbackBytes:10000})};}};
+ const sandbox={URLSearchParams,TextEncoder,crypto:{randomUUID:()=> 'channel-test'},document:{querySelector:key=>nodes.get(key)},location:{search:'?username=Xpy',replace:url=>destinations.push(url)},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},window:{addEventListener:(name,fn)=>{events[name]=fn;},confirm:()=>true},setTimeout:(fn,delay)=>timers.push({fn,delay}),fetch:async(url,options)=>{if(options?.method==='POST'&&url.includes('/feedback')){posts.push(JSON.parse(options.body));return new Promise(resolve=>{finish=resolve;});}return{ok:true,json:async()=>({topic:'synthetic',status:'waiting',handled:0,page:{feedbackType:'test',pageHash:'hash'},maxFeedbackBytes:10000})};}};
  vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),withPaths(sandbox));await new Promise(setImmediate);
  const event=(type,payload)=>({source:nodes.get('#page').contentWindow,origin:'null',data:{type,channel:'channel-test',messageId:'message-test',payload}});
  return{nodes,stored,timers,destinations,posts,event,submit:payload=>events.message(event('handover:submit',payload)),dirty:()=>events.message(event('handover:dirty')),finish:(result,status=true)=>finish({ok:status,json:async()=>result})};
