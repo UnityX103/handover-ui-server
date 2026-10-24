@@ -28,7 +28,7 @@ try {
  assert.equal(await page.locator('#username').inputValue(),'');
  await page.locator('#username').fill('Xpy');await page.locator('#username-form button').click();
  await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).waitFor();
- assert.equal(await page.locator('a.request').count(),1);assert.equal(await page.locator('#settings-toggle').isVisible(),false);await fit();
+ assert.equal(await page.locator('a.request').count(),1);assert.equal(await page.locator('#settings-toggle').isVisible(),true);await fit();
  await page.locator('a.request').click();await page.locator('#free').fill('Synthetic answer');await page.locator('#stage-text').click();await page.locator('#send').click();
  await page.waitForFunction(()=>sessionStorage.getItem('handover:return:'+location.pathname+location.search));
  const events=await api(`/api/requests/${a.id}/wait?timeout=0`);assert.equal(events.events.length,1);assert.equal(events.events[0].actions[0].text,'Synthetic answer');assert.equal(events.username,'Xpy');

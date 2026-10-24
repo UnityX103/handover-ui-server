@@ -7,7 +7,7 @@ const validUsername = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,
 const storedUsername = () => { try { const value = sessionStorage.getItem('handover:username'); return validUsername(value) ? value : null; } catch { return null; } };
 let username = legacy ? null : storedUsername();
 const userQuery = legacy ? '' : username ? '?' + new URLSearchParams({username}) : '';
-let requests = [], user = null, installPrompt = null, loading = false, generation = 0;
+let requests = [], user = null, installPrompt = null, loading = false, generation = 0, leavingUsername = false;
 const mismatch = () => !legacy && username && targetUsername !== null && targetUsername !== username;
 const current = (name, version) => version === generation && (legacy || storedUsername() === name);
 const kinds = {questionnaire:'问卷',feedback:'反馈',help:'求助'};
@@ -16,7 +16,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':
 const message = (s = '') => { $('message').textContent = s; };
 async function api(path, data, method = 'POST') {
   if (!legacy && (!username || mismatch())) throw new Error('请先明确登录目标用户名');
-  if (!legacy && !['/api/me','/api/requests'].includes(path)) throw new Error('用户名模式不提供登录或设备管理权限');
+  if (!legacy && !['/api/me','/api/requests','/api/subscriptions'].includes(path)) throw new Error('用户名模式不提供登录或设备管理权限');
   const headers = legacy ? {} : {'X-Handover-Username':username};
   const response = await fetch(path, data === undefined ? {cache:'no-store',headers} : {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(data)});
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '连接失败'); return result;
@@ -33,6 +33,7 @@ function render() {
   if ('setAppBadge' in navigator) { if(open.length) navigator.setAppBadge(open.length).catch(()=>{}); else navigator.clearAppBadge().catch(()=>{}); }
 }
 async function refresh() {
+  if (leavingUsername) return;
   if (!legacy && (!username || mismatch())) return;
   if (!legacy && storedUsername() !== username) { generation++; $('workspace').hidden = true; $('requests').innerHTML = ''; location.replace('/'); return; }
   if (loading) return; loading = true; const name = username, version = generation;
@@ -40,7 +41,8 @@ async function refresh() {
     const me = await api('/api/me'); if (!current(name,version)) return; user = me; $('version').textContent = user.version === 'development' ? '开发环境' : user.version.slice(0,12);
     const available = !legacy ? user.mode === 'username' && user.username === username : user.authenticated;
     $('login').hidden = !legacy || user.authenticated; $('workspace').hidden = !available;
-    $('settings-toggle').hidden = !legacy; $('settings').hidden = !legacy || $('settings').hidden;
+    $('settings-toggle').hidden = !available; for (const id of ['pair','logout']) $(id).hidden = !legacy;
+    $('device-state').textContent = legacy ? '' : '通知绑定到当前用户名和此浏览器。只有点击开启通知才请求系统权限。';
     $('username-status').textContent = username === null ? '' : `当前公开用户名：${username}（不是身份认证）`;
     if (available) {
       const list = await api('/api/requests'); if (!current(name,version)) return; requests = list.requests; render();
@@ -68,31 +70,66 @@ $('username-form').onsubmit = async (event) => {
   const value = $('username').value;
   if (!validUsername(value)) { message('用户名需为 1–64 个英文字母、数字、下划线或连字符'); return; }
   if (targetUsername !== null && targetUsername !== value) { message(`此链接属于 ${targetUsername}，请使用匹配的用户名；或返回首页登录其他用户名。`); return; }
+  const bound = window.HandoverPush.marker(); if (bound && bound.username !== value) { message('此浏览器通知仍绑定其他用户名，请先在原用户名退出设备绑定'); return; }
   const attempt = ++generation; const button = event.submitter; if (button) button.disabled = true; message('正在连接目标用户名…');
   const controller = new AbortController(), timer = setTimeout(()=>controller.abort(),10000);
   try {
+    await window.HandoverPush.login(value,async()=>{
     const response = await fetch('/api/me',{cache:'no-store',headers:{'X-Handover-Username':value},signal:controller.signal});
     const result = await response.json();
     if (attempt !== generation || storedUsername()) return;
     if (!response.ok || result.mode !== 'username' || result.username !== value) throw new Error('目标用户名连接失败，请重试');
+    const bound = window.HandoverPush.marker(); if (bound && bound.username !== value) throw new Error('设备仍绑定其他用户名');
+    if (!bound && 'serviceWorker' in navigator) await window.HandoverPush.active(null);
+    if (attempt !== generation || storedUsername()) return;
     sessionStorage.setItem('handover:username',value);
     const next = new URLSearchParams({username:value});
     const request = params.get('request'); if (request && /^[A-Za-z0-9_-]{8,100}$/.test(request)) next.set('request',request);
     location.assign('/?' + next);
+    });
   } catch { if (attempt === generation) message('连接失败，尚未登录或保存用户名；请检查网络后重试。'); }
   finally { clearTimeout(timer); if (attempt === generation && button) button.disabled = false; }
 };
 $('username-cancel').onclick = () => { generation++; };
-$('username-logout').onclick = () => {
-  try { sessionStorage.removeItem('handover:username'); } catch { message('无法退出当前用户名，请重试'); return; }
-  generation++; username = null; requests = []; user = null; $('requests').innerHTML = ''; $('workspace').hidden = true; $('username').value = ''; $('username-panel').hidden = false; $('username-logout').hidden = true; $('username-status').textContent = ''; location.replace('/');
+$('username-logout').onclick = async () => {
+  const name = username; generation++; leavingUsername = true; $('username-logout').disabled = true;
+  try {
+    await window.HandoverPush.clear(name);
+    sessionStorage.removeItem('handover:username');
+    username = null; requests = []; user = null; $('settings-toggle').hidden = true; $('settings').hidden = true; $('requests').innerHTML = ''; $('workspace').hidden = true; $('username').value = ''; $('username-panel').hidden = false; $('username-logout').hidden = true; $('username-status').textContent = ''; location.replace('/');
+  } catch (error) { message(error.message || '无法解除设备绑定，尚未退出，请重试'); }
+  finally { leavingUsername = false; $('username-logout').disabled = false; }
 };
 $('login-form').onsubmit = (event) => { event.preventDefault(); task(event.submitter, async () => { await api('/api/login',{token:$('login-code').value.trim()}); $('login-code').value=''; await refresh(); }); };
 $('refresh').onclick = () => refresh();
+
+// Touch-only pull refresh: never capture ordinary scrolling or form gestures.
+let pull = null;
+const pullAllowed = () => !loading && !leavingUsername && (legacy ? user?.authenticated && !$('logout').disabled : !!username && storedUsername() === username && !mismatch() && user?.mode === 'username');
+const atTop = () => (window.scrollY ?? document.documentElement?.scrollTop ?? 0) <= 0;
+const resetPull = () => { if (pull) $('connection').textContent = pull.status; pull = null; };
+window.addEventListener('touchstart',(event)=>{
+  resetPull();
+  if (!pullAllowed() || !atTop() || event.touches.length !== 1 || event.target?.closest?.('input,textarea,select,button,a,[contenteditable="true"]')) return;
+  const touch=event.touches[0];pull={x:touch.clientX,y:touch.clientY,distance:0,status:$('connection').textContent};
+},{passive:true});
+window.addEventListener('touchmove',(event)=>{
+  if (!pull) return;
+  if (!pullAllowed() || !atTop() || event.touches.length !== 1) {resetPull();return;}
+  const touch=event.touches[0],dx=touch.clientX-pull.x,dy=touch.clientY-pull.y;
+  if (dy<0 || Math.abs(dx)>Math.abs(dy)) {resetPull();return;}
+  pull.distance=dy;
+  $('connection').textContent=dy>=72?'松开刷新':dy>=12?'下拉刷新':pull.status;
+},{passive:true});
+window.addEventListener('touchend',()=>{
+  const ready=pull && pull.distance>=72 && pullAllowed() && atTop();resetPull();if(ready)void refresh();
+},{passive:true});
+window.addEventListener('touchcancel',resetPull,{passive:true});
+
 $('settings-toggle').onclick = () => { $('settings').hidden = !$('settings').hidden; $('settings-toggle').setAttribute('aria-expanded',String(!$('settings').hidden)); };
 for(const id of ['kind','status','search']) $(id).addEventListener('input',render);
 $('pair').onclick = () => task($('pair'),async () => { const r = await api('/api/login-code',{}); $('pairing').textContent = `固定登录码：${r.code}`; $('pairing').hidden = false; $('device-state').textContent='在手机打开同一网址，输入此码。长期有效，可重复使用，服务更新或重启后不变。'; });
-$('logout').onclick = () => task($('logout'),async () => { await api('/api/logout',{}); $('pairing').hidden=true; requests=[]; await refresh(); });
+$('logout').onclick = () => task($('logout'),async () => { await window.HandoverPush.transaction(async()=>{await api('/api/logout',{}); if (!window.HandoverPush.marker() && 'serviceWorker' in navigator) await window.HandoverPush.active(null);}); $('pairing').hidden=true; requests=[]; await refresh(); });
 window.addEventListener('beforeinstallprompt',(event) => { event.preventDefault(); installPrompt=event; });
 $('install').onclick = () => task($('install'),async () => {
   if(installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; installPrompt=null; }
@@ -100,13 +137,28 @@ $('install').onclick = () => task($('install'),async () => {
 });
 const keyBytes = (key) => { const raw=atob(key.replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from(raw,(c)=>c.charCodeAt(0)); };
 $('push').onclick = () => task($('push'),async () => {
+  const name = username, version = generation, pushEpoch = window.HandoverPush.epoch();
+  const valid = () => window.HandoverPush.epoch() === pushEpoch && (legacy || (current(name,version) && username === name));
   if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw new Error('此浏览器尚不支持通知。iPhone 请先添加到主屏幕，再从桌面图标打开。');
-  const permission=await Notification.requestPermission();
+  const permission=await Notification.requestPermission(); if (!valid()) return;
   if(permission!=='granted') throw new Error('通知尚未获准。你可以在浏览器或系统设置中授权后重试。');
-  const registration=await navigator.serviceWorker.ready;
-  let subscription=await registration.pushManager.getSubscription();
-  if(!subscription) subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:keyBytes(user.vapidPublicKey)});
-  await api('/api/subscriptions',subscription.toJSON()); $('push').textContent='通知已开启'; $('device-state').textContent='已保存此设备的通知订阅。新请求会向此设备发送提醒。';
+  const operation = async () => {
+    if (!valid()) return;
+    const registration=await navigator.serviceWorker.ready; if (!valid()) return;
+    let subscription=await registration.pushManager.getSubscription(); if (!valid()) return;
+    if(!subscription) subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:keyBytes(user.vapidPublicKey)});
+    if (!valid()) return;
+    if (!legacy) {
+      const previous = window.HandoverPush.marker();
+      if (previous && previous.username !== name) throw new Error('此浏览器已绑定其他用户名，请先在原用户名退出通知绑定');
+      await window.HandoverPush.remember(name,subscription.endpoint);
+    }
+    await api('/api/subscriptions',subscription.toJSON());
+    await window.HandoverPush.active(legacy ? '@legacy' : name);
+    if (!valid()) return;
+    $('push').textContent='通知已开启'; $('device-state').textContent=legacy?'已保存此设备通知订阅。':`此设备接收 ${name} 的新请求通知；退出时解除此设备绑定。`;
+  };
+  await window.HandoverPush.bind(legacy ? '@legacy' : name,operation);
 });
 async function init() {
   if('serviceWorker' in navigator) await navigator.serviceWorker.register('/sw.js').catch(()=>{});

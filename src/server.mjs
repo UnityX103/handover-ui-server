@@ -132,19 +132,20 @@ export function createHandoverServer(options = {}) {
   };
   const notify = async (request) => {
     const subscriptions = store.all('subscriptions');
-    const message = JSON.stringify({ title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, url: `/grill/${request.id}/` });
-    const results = await Promise.allSettled(Object.entries(subscriptions).map(async ([key, sub]) => {
+    const scopedSubscriptions = Object.entries(subscriptions).filter(([, sub]) => usernameRecord(request) ? sub.accessMode === 'username' && sub.username === request.username : sub.accessMode !== 'username');
+    const message = JSON.stringify({ ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, url: `/grill/${request.id}/${usernameRecord(request) ? '?username=' + encodeURIComponent(request.username) : ''}` });
+    const results = await Promise.allSettled(scopedSubscriptions.map(async ([key, sub]) => {
       try {
         const send = config.sendNotification || webpush.sendNotification.bind(webpush);
         await send(sub.subscription, message, { TTL: 86400, urgency: 'high', timeout: 10000, vapidDetails: { subject: config.vapidSubject || publicUrl.origin, publicKey: vapid.publicKey, privateKey: vapid.privateKey } });
       } catch (e) {
-        if (e.statusCode === 404 || e.statusCode === 410) { const current = store.all('subscriptions'); delete current[key]; store.save('subscriptions', current); }
+        if (e.statusCode === 404 || e.statusCode === 410) { const current = store.all('subscriptions'); if (JSON.stringify(current[key]) === JSON.stringify(sub)) { delete current[key]; store.save('subscriptions', current); } }
         else console.error(JSON.stringify({ event: 'push_failed', requestId: request.id, status: Number(e.statusCode) || 'network' }));
       }
     }));
     return results.length;
   };
-  const notifyLater = (r) => { if (!usernameRecord(r) && !config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
+  const notifyLater = (r) => { if (!config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
   const bytes = (res, status, content, type = 'application/json; charset=utf-8', extra = {}) => {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', ...extra }); res.end(content);
   };
@@ -242,7 +243,7 @@ export function createHandoverServer(options = {}) {
         const value = makeTicket('browser', data.requestId || '');
         return json(res, 201, { ok: true, loginUrl: `${publicUrl.origin}/?mode=legacy#ticket=${value}` });
       }
-      if (req.method === 'GET' && p === '/api/me' && username(req)) return json(res, 200, { mode: 'username', username: username(req), authenticated: false, version });
+      if (req.method === 'GET' && p === '/api/me' && username(req)) return json(res, 200, { mode: 'username', username: username(req), authenticated: false, vapidPublicKey:vapid.publicKey, version });
       if (req.method === 'GET' && p === '/api/me') return json(res, 200, { authenticated: !!owner(req), vapidPublicKey: owner(req) ? vapid.publicKey : undefined, version });
       if (req.method === 'POST' && p === '/api/logout') {
         const session = requireOwner(req); const all = sessions(); delete all[session.key]; store.save('sessions', all);
@@ -251,16 +252,23 @@ export function createHandoverServer(options = {}) {
       }
       if (req.method === 'POST' && ['/api/login-code', '/api/pairing-tickets'].includes(p)) { requireOwner(req); return json(res, 200, { ok: true, code: loginCode, expiresIn: null, reusable: true }); }
       if (p === '/api/subscriptions' && req.method === 'POST') {
-        const session = requireOwner(req), subscription = await body(req, 16384); let url;
+        const name = username(req), session = name ? null : requireOwner(req), subscription = await body(req, 16384); let url;
         try { url = new URL(subscription.endpoint); } catch { fail(400, '无效推送地址'); }
         const host = url.hostname;
         if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || !(host === 'fcm.googleapis.com' || host === 'fcmregistrations.googleapis.com' || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.apple.com'))) fail(400, '不支持的推送服务');
         if (!text(subscription.endpoint, 4096) || !/^[A-Za-z0-9_-]{86,88}={0,2}$/.test(subscription.keys?.p256dh || '') || !/^[A-Za-z0-9_-]{22}={0,2}$/.test(subscription.keys?.auth || '')) fail(400, '无效推送密钥');
-        const all = store.all('subscriptions'); all[hash(subscription.endpoint)] = { subscription, session: session.key, at: now() }; store.save('subscriptions', all); return json(res, 200, { ok: true });
+        const all = store.all('subscriptions'), key = hash(subscription.endpoint), previous = all[key];
+        if (previous && (name ? previous.accessMode !== 'username' || previous.username !== name || !equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth) : previous.accessMode === 'username')) fail(409, '此设备已绑定其他用户名或私有模式，请先在原模式退出通知绑定');
+        // Persist only validated Web Push fields; never echo device endpoints or keys.
+        const device = {endpoint:subscription.endpoint,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth}};
+        all[key] = { subscription:device, revision:crypto.randomUUID(), ...(name ? {accessMode:'username',username:name} : {session:session.key}), at: now() };
+        store.save('subscriptions', all); return json(res, 200, { ok: true });
       }
       if (p === '/api/subscriptions' && req.method === 'DELETE') {
-        const session = requireOwner(req), data = await body(req); const all = store.all('subscriptions'), key = hash(data.endpoint);
-        if (all[key]?.session === session.key) { delete all[key]; store.save('subscriptions', all); } return json(res, 200, { ok: true });
+        const name = username(req), session = name ? null : requireOwner(req), data = await body(req, 16384); const all = store.all('subscriptions'), key = hash(data.endpoint), existing = all[key];
+        if (name && (!text(data.endpoint,4096) || !text(data.keys?.p256dh,128) || !text(data.keys?.auth,128))) fail(400, '解绑需要此设备完整推送订阅');
+        const allowed = name ? existing?.accessMode === 'username' && existing.username === name && equal(existing.subscription?.keys?.p256dh,data.keys.p256dh) && equal(existing.subscription?.keys?.auth,data.keys.auth) : existing?.accessMode !== 'username' && existing?.session === session.key;
+        if (allowed) { delete all[key]; store.save('subscriptions', all); } return json(res, 200, { ok: true });
       }
       if (p === '/api/requests' && req.method === 'GET') { const name = username(req); if (!name) requireOwner(req); return json(res, 200, { requests: store.list().filter(r => name ? usernameRecord(r) && r.username === name : !usernameRecord(r)).map(publicRequest) }); }
       if (p === '/api/requests' && req.method === 'POST') {
