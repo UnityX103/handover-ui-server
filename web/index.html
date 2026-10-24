@@ -26,7 +26,7 @@
           <p id="device-state" role="status"></p><p id="pairing" hidden></p>
           <details><summary>安装方法</summary><p>iPhone：用 Safari 打开本站，点击分享，再选「添加到主屏幕」。Android：在浏览器菜单选择「安装应用」或「添加到主屏幕」。安装后重新打开应用并授权通知。</p></details>
         </section>
-        <div class="filters"><label>类型<select id="kind"><option value="all">全部类型</option><option value="questionnaire">问卷</option><option value="feedback">反馈</option><option value="help">求助</option></select></label><label>状态<select id="status"><option value="open">待处理</option><option value="all">全部状态</option><option value="completed">已结束</option></select></label><label class="search">查找<input id="search" type="search" placeholder="标题、项目或来源会话"></label></div>
+        <div class="filters"><label>类型<select id="kind"><option value="all">全部类型</option><option value="questionnaire">问卷</option><option value="feedback">反馈</option><option value="help">求助</option></select></label><label>状态<select id="status"><option value="waiting" selected>待回答</option><option value="sent">已发送，等待回复</option><option value="all">全部状态</option><option value="open">进行中</option><option value="completed">已结束</option></select></label><label class="search">查找<input id="search" type="search" placeholder="标题、项目或来源会话"></label></div>
         <div id="requests" aria-live="polite"></div>
       </section>
       <p id="message" role="status"></p>

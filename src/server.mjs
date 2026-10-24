@@ -14,7 +14,10 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kinds = ['questionnaire', 'feedback', 'help'];
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const text = (v, max = 4000) => typeof v === 'string' && v.length <= max;
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, ...(r.cancellation ? {cancellation:r.cancellation} : {}), lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
+// Receipt consumption is not an Agent reply; this independent phase survives ack.
+const awaitingReply = (r) => typeof r.awaitingReply === 'boolean' ? r.awaitingReply : r.status === 'submitted';
+const waitingFor = (r) => ['completed', 'cancelled'].includes(r.status) || r.state.finished ? null : awaitingReply(r) ? 'agent' : 'user';
+const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, waitingFor: waitingFor(r), ...(r.cancellation ? {cancellation:r.cancellation} : {}), lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
 
 function actionsValid(actions, state) {
   if (!Array.isArray(actions) || !actions.length || actions.length > 100) fail(400, 'actions 应为 1–100 个操作');
@@ -163,7 +166,7 @@ export function createHandoverServer(options = {}) {
   const page = (r) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');
-    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && sessionStorage.getItem('handover:username') !== name) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
+    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && !handoverSessionActive()) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); handoverSubmissionReceived(j, actions);');
@@ -172,7 +175,7 @@ export function createHandoverServer(options = {}) {
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
     if (usernameRecord(r)) {
-      const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = sessionStorage.getItem('handover:username'); } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify('/?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
+      const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = localStorage.getItem('handover:username'); if (handoverSelectedUser === null) { handoverSelectedUser = sessionStorage.getItem('handover:username'); if (handoverSelectedUser) localStorage.setItem('handover:username', handoverSelectedUser); sessionStorage.removeItem('handover:username'); } } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify('/?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
       html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
     }
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
@@ -203,7 +206,7 @@ export function createHandoverServer(options = {}) {
     const refresh = () => listenerTimes.set(r.id, Date.now()); refresh();
     const reply = () => {
       const current = store.get(r.id);
-      return { ok: true, requestId: r.id, source: r.source, ...(usernameRecord(r) ? {username:r.username,accessMode:'username'} : {}), status: current.status, ...(current.cancellation ? {cancellation:current.cancellation} : {}), events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
+      return { ok: true, requestId: r.id, source: r.source, ...(usernameRecord(r) ? {username:r.username,accessMode:'username'} : {}), status: current.status, waitingFor: waitingFor(current), ...(current.cancellation ? {cancellation:current.cancellation} : {}), events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
     };
     let result = reply();
     if (result.events.length || ['completed', 'cancelled'].includes(result.status) || !timeout) return json(res, 200, result);
@@ -219,7 +222,7 @@ export function createHandoverServer(options = {}) {
   const cancelRequest = (r, by) => {
     if (r.status === 'cancelled') return r;
     if (r.state.finished || r.status === 'completed') fail(409, '请求已结束');
-    r.status = 'cancelled'; r.updated = now(); r.cancellation = {by, at:r.updated};
+    r.status = 'cancelled'; r.awaitingReply = false; r.updated = now(); r.cancellation = {by, at:r.updated};
     r.state.finished = {at:r.updated, doc:''}; store.put(r); emit(r); return r;
   };
   server = http.createServer(async (req, res) => {
@@ -265,7 +268,7 @@ export function createHandoverServer(options = {}) {
         if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || !(host === 'fcm.googleapis.com' || host === 'fcmregistrations.googleapis.com' || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.apple.com'))) fail(400, '不支持的推送服务');
         if (!text(subscription.endpoint, 4096) || !/^[A-Za-z0-9_-]{86,88}={0,2}$/.test(subscription.keys?.p256dh || '') || !/^[A-Za-z0-9_-]{22}={0,2}$/.test(subscription.keys?.auth || '')) fail(400, '无效推送密钥');
         const all = store.all('subscriptions'), key = hash(subscription.endpoint), previous = all[key];
-        if (previous && (name ? previous.accessMode !== 'username' || previous.username !== name || !equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth) : previous.accessMode === 'username')) fail(409, '此设备已绑定其他用户名或私有模式，请先在原模式退出通知绑定');
+        if (previous && (name ? !equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth) : previous.accessMode === 'username')) fail(409, '此设备订阅证明不匹配，不能替换现有绑定；请在本设备重新授权通知');
         // Persist only validated Web Push fields; never echo device endpoints or keys.
         const device = {endpoint:subscription.endpoint,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth}};
         all[key] = { subscription:device, revision:crypto.randomUUID(), ...(name ? {accessMode:'username',username:name} : {session:session.key}), at: now() };
@@ -292,7 +295,7 @@ export function createHandoverServer(options = {}) {
         if (!Array.isArray(questions) || questions.length > 100) fail(400, '问题数量应为 1–100');
         state = applyPatch(state, { questions }, created); validateState(state);
         const page = customPage(data.page);
-        const r = { id: data.id, kind: data.kind, source: data.source, ...(name ? {accessMode:'username', username:name} : {tokenHash: hash(data.requestToken)}), creationHash, created, updated: created, status: 'waiting', state, events: [], ...(page ? { page } : {}) };
+        const r = { id: data.id, kind: data.kind, source: data.source, ...(name ? {accessMode:'username', username:name} : {tokenHash: hash(data.requestToken)}), creationHash, created, updated: created, status: 'waiting', awaitingReply: false, state, events: [], ...(page ? { page } : {}) };
         store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${publicUrl.origin}/grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
       }
       const api = p.match(/^\/api\/requests\/([A-Za-z0-9_-]{8,100})(?:\/(wait|ack|visual|cancel))?$/);
@@ -314,6 +317,8 @@ export function createHandoverServer(options = {}) {
           const next = applyPatch(r.state, patch, now()); validateState(next); validateAxesChange(r.state, next);
           if (r.state.finished && !next.finished) fail(409, '已完成请求不能重新激活，请创建新请求');
           const added = next.questions.some((q) => !r.state.questions.some((old) => old.id === q.id));
+          const reopened = Array.isArray(patch.questions) && patch.questions.some((q) => ['open', 'reopened'].includes(q.status) && r.state.questions.some((old) => old.id === q.id));
+          r.awaitingReply = next.finished || added || reopened ? false : awaitingReply(r);
           r.state = next; r.updated = now(); r.status = next.finished ? 'completed' : (r.events.length > (next.agent.handled || 0) ? 'submitted' : 'waiting');
           store.put(r); emit(r); if (added) notifyLater(r); return json(res, 200, { ok: true, ...publicRequest(r) });
         }
@@ -321,6 +326,7 @@ export function createHandoverServer(options = {}) {
           const data = await body(req); r = store.get(api[1]); scoped(req, r);
           const handled = r.state.agent.handled || 0;
           if (!Number.isInteger(data.seq) || data.seq < handled || data.seq > r.events.length) fail(400, '确认序号超出范围');
+          r.awaitingReply = awaitingReply(r);
           r.state.agent.handled = data.seq; r.updated = now(); r.status = r.status === 'cancelled' ? 'cancelled' : (r.state.finished ? 'completed' : (r.events.length > data.seq ? 'submitted' : 'waiting')); store.put(r); return json(res, 200, { ok: true, handled: data.seq });
         }
         if (req.method === 'POST' && operation === 'cancel') return json(res, 200, {ok:true, ...publicRequest(cancelRequest(r, 'agent'))});
@@ -347,7 +353,7 @@ export function createHandoverServer(options = {}) {
           if (existing) { if (existing.digest !== digest) fail(409, '相同提交身份的内容不一致'); return json(res, 200, { ok: true, seq: existing.seq, saved: true, handled: (r.state.agent.handled || 0) >= existing.seq }); }
           if (r.state.finished || r.status === 'cancelled') fail(409, '请求已结束');
           const event = { type: 'feedback', requestId: r.id, sourceSession: r.source.session, ...(usernameRecord(r) ? {username:r.username} : {}), seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, feedbackType: data.feedbackType, documentId: r.page.documentId, pageHash: r.page.pageHash, payload: data.payload };
-          r.events.push(event); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
+          r.events.push(event); r.awaitingReply = true; r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }
         if (req.method === 'POST' && grill[2] === 'cancel') {
@@ -369,7 +375,7 @@ export function createHandoverServer(options = {}) {
           if (r.state.finished || r.status === 'cancelled') fail(409, '请求已结束');
           actionsValid(data.actions, r.state);
           const event = { type: 'send', requestId: r.id, sourceSession: r.source.session, ...(usernameRecord(r) ? {username:r.username} : {}), seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, actions: data.actions };
-          r.events.push(event); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
+          r.events.push(event); r.awaitingReply = !data.actions.every((action) => action.type === 'reopen'); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }
       }

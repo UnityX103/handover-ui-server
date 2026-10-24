@@ -31,7 +31,7 @@ test('username without global token completes question, reply, wait, ack and fin
  for(const script of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(script[1].trim())new vm.Script(script[1]);
  assert.match(html,/handover:draft/);assert.match(html,/href="\/\?username=Xpy"/);
  const inline=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(m=>m[1]).find(code=>code.includes('handover:username'));
- for(const selected of [null,'Other']) { const redirects=[];vm.runInNewContext(inline,{sessionStorage:{getItem:()=>selected},location:{replace:url=>redirects.push(url)}});assert.deepEqual(redirects,['/?request='+p.id+'&username=Xpy']); }
+ for(const selected of [null,'Other']) { const redirects=[];vm.runInNewContext(inline,{localStorage:{getItem:()=>selected,setItem(){}},sessionStorage:{getItem:()=>null,removeItem(){}},location:{replace:url=>redirects.push(url)}});assert.deepEqual(redirects,['/?request='+p.id+'&username=Xpy']); }
  const submit={submissionId:crypto.randomUUID(),actions:[{q:'q1',type:'answer',kind:'text',text:'Public reply'}]};
  assert.equal((await f.call('/grill/'+p.id+'/send',{data:submit})).body.seq,1);
  assert.equal((await f.call('/grill/'+p.id+'/send',{data:submit})).body.seq,1);
