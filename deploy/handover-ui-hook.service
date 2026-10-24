@@ -1,0 +1,21 @@
+[Unit]
+Description=Signed GitHub push receiver for handover UI
+After=network.target
+
+[Service]
+Type=simple
+User=handover-hook
+Group=handover-hook
+ExecStart=/usr/bin/python3 /opt/handover-ui/ops/github_hook.py
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/handover-ui-deploy
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+[Unit]
+Description=Remote handover UI
+After=network.target
+
+[Service]
+Type=simple
+User=handover-ui
+Group=handover-ui
+WorkingDirectory=/opt/handover-ui/current
+EnvironmentFile=/etc/handover-ui/service.env
+ExecStart=/usr/bin/node /opt/handover-ui/current/src/server.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=12
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/handover-ui
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

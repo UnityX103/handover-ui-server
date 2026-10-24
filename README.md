@@ -1,251 +1,106 @@
-# grill-with-ui
+# 远程交接服务
 
-A skill for coding agents that moves a "grilling" design interview out of the terminal and
-onto a local browser page. The agent asks its questions as cards, each with lettered options
-and a highlighted recommendation. You answer them in any order, defer or reopen them, discuss
-any single one in its own thread without losing the rest of the session, and press one
-button, **Send to Agent**, to ship everything you staged as a single turn. At the end the
-agent writes an exhaustive design doc for the topic.
+基于 [jasonku09/grill-with-ui](https://github.com/jasonku09/grill-with-ui) 扩展的个人远程交接服务。保留 Grill 的问卷、多选、每题讨论、暂缓、重新打开、深入分析与图解协议，增加反馈、求助、多会话隔离、手机桌面安装及 Web Push。
 
-![A grill in progress: the recommended option accepted on one question, a question asked in
-another one's discussion thread, both shipped with one Send, the agent's reply and next round
-of questions arriving, a pros and cons table from Explore deeper, a prototype of the design
-from Visualize, and that prototype redrawn after one note of feedback](docs/demo.gif)
+Agent 发起请求，自动打开默认浏览器，并在当前回合分段等待属于自己的真实答复。手机和电脑访问同一服务器；答复被持久保存，Agent 处理后明确确认消费，再继续原会话。手机不主动创建业务请求。
 
-Above: a recommendation accepted on Q3 and a question asked on Q4 go to the agent as one Send,
-and its reply opens the next round. Then one click on **Explore deeper** lays out the pros and
-cons of Q6's options, **Visualize** draws the design so far as a prototype, and one note in its
-feedback thread redraws it as v2 with the change asked for. Recorded against a real session by
-[`design/record-demo.mjs`](design/record-demo.mjs).
+## 当前部署
 
-Under the hood it is small on purpose: one Node script and one HTML file, no dependencies,
-no build step. The agent owns `state.json` and changes it only through
-`node server.mjs patch`, sending just what changed as a small JSON patch that the script
-merges, validates, and writes atomically; a whole-file rewrite would put the entire state
-(60 KB by the end of a long grill) into the agent's context on every turn. The page appends
-one line per Send to `events.jsonl`; the server that serves the page is also the process
-whose output a persistent Monitor delivers to the agent. In wait mode the agent must keep
-its foreground listener active; a page server alone cannot wake an ended agent turn.
-Submissions made while the agent is not listening remain queued for resume.
+- 私有仓库：`UnityX103/handover-ui-server`，发布分支 `main`。
+- 公网入口：**https://server.nanzhaigame.cn:8024/**。
+- 内部应用：`127.0.0.1:8025`；内部 GitHub 接收器：`127.0.0.1:8032`。
+- GitHub 原生 push webhook → 签名验证 → 持久队列 → 服务器只读拉取 → 独立 release → 测试 → 原子切换 → 健康检查。失败回滚，不使用定时拉取。
 
-## Install
+部署、查看版本、日志和回滚方法见 [部署交接](docs/DEPLOYMENT.md)。原始来源和许可证见 [UPSTREAM.md](UPSTREAM.md) 与 [LICENSE](LICENSE)。
 
-The skill is a plain [Agent Skills](https://agentskills.io) folder (`SKILL.md` plus one
-script and one page), so it installs the same way everywhere: put this folder where your
-agent looks for skills, under the name `grill-with-ui`. A symlink keeps `git pull` as the
-update path; copying the folder works too. Node 20 or newer is the only requirement.
+## 手机使用
+
+1. 电脑由客户端 `home` 自动打开并登录。在“设备与通知”点击“生成手机登录码”。
+2. 手机打开同一公网入口，输入一次性登录码；有效期 10 分钟。iPhone 用 Safari 分享菜单“添加到主屏幕”，Android 用浏览器“安装应用 / 添加到主屏幕”。
+3. 从桌面图标打开，在“设备与通知”点击“开启通知”并授予权限。iPhone Web Push 需要 iOS/iPadOS 16.4 或更新版本的桌面 Web App。
+
+安装和通知权限必须由用户在手机上操作。通知只提醒有新请求，不负责唤醒来源 Agent。关闭网页后，订阅过的设备仍可由浏览器推送服务接收提醒。断网时不提交答复；已暂存内容和草稿保留在该设备，恢复连接后手动发送。Service Worker 只缓存公开静态界面，不缓存请求列表、题目或答复。
+
+## 安装两个 Skill
 
 ```sh
-git clone https://github.com/jasonku09/grill-with-ui ~/Projects/grill-with-ui
-ln -s ~/Projects/grill-with-ui ~/.claude/skills/grill-with-ui   # Claude Code (Cursor reads it too)
-ln -s ~/Projects/grill-with-ui ~/.agents/skills/grill-with-ui   # Codex, Gemini CLI, Cursor, Copilot
+npm run install:skills
 ```
 
-Where each agent looks, and how to start a grill once it is there:
+安装 `skills/grill-with-ui` 与 `skills/remote-handover` 到用户 Codex Skill 目录。旧版移到 `~/.local/share/handover-ui/skill-backups/<时间>/`，不再被发现为活动 Skill。已有 `grill-with-docs-ui` 会更新为组合调用新的远程入口，保留领域词汇表与 ADR 工作流。
 
-| Agent | User-level folder | Project-level folder | Start a grill |
-|---|---|---|---|
-| Claude Code | `~/.claude/skills/` | `.claude/skills/` | `/grill-with-ui <topic>` |
-| Codex (CLI, IDE) | `~/.agents/skills/` | `.agents/skills/` | `$grill-with-ui <topic>` |
-| Gemini CLI | `~/.gemini/skills/` or `~/.agents/skills/` | `.gemini/skills/` or `.agents/skills/` | say "grill with ui: <topic>"; accept the activation prompt |
-| Cursor | `~/.cursor/skills/` or `~/.agents/skills/` (also `~/.claude/skills/`) | `.cursor/skills/` or `.agents/skills/` | `/grill-with-ui <topic>` in Agent chat |
-| GitHub Copilot (CLI, VS Code, JetBrains) | `~/.copilot/skills/` or `~/.agents/skills/` | `.github/skills/`, `.claude/skills/`, or `.agents/skills/` | say "grill with ui: <topic>" |
-| Any other agent that reads `SKILL.md` | its skills folder | | say "grill with ui: <topic>" |
+两份 Skill 共用 `~/.config/handover-ui/config.json`（0600）：
 
-Paths are from each product's documentation as of September 2026; `/skills` (Codex,
-Gemini CLI) or the agent's skill picker will show whether the install landed. The skill's
-description names the phrase "grill with ui", so plain language works on every agent.
-
-What the agent needs at run time:
-
-- **A shell tool and Node 20+.** Claude Code is woken per Send by its persistent Monitor
-  tool. Agents without one use **wait mode**: `serve --detach` starts the page server,
-  and a foreground `wait` loop receives sends. Follow [Wait mode](SKILL.md#wait-mode-agents-without-a-monitor-tool)
-  for startup, harness fallback, and turn-boundary requirements.
-- **Optionally a subagent tool**, for Visualize. See [Use](#use) for the drawing modes;
-  without a subagent tool, the agent draws inline.
-
-## Use
-
-In any project:
-
-```
-/grill-with-ui <topic you want grilled>
+```json
+{"serverUrl":"https://your-server.example:8024","agentToken":"由受限本地配置保存"}
 ```
 
-The agent opens the page in your browser and prints its URL too, in case no browser
-could be opened (a headless or remote machine). Answer by clicking an option (the recommended one is
-outlined) or writing free text. A card marked "Pick one or more" takes any number of
-options, and each click toggles one. Start a discussion in the right-hand panel; use **Defer** and **Reopen** on a card when
-you want to. Staged actions and typed drafts survive a reload. **Send N to Agent** (⌘↩)
-ships staged actions together with text left in any question's discussion or the visual
-feedback box, including questions you navigated away from. These notes count toward the
-Send total and can enable Send on their own; sending clears their boxes. A free-text answer
-is sent only once staged (**Stage text**, or ⌘↩ in its box): until then it stays in its box,
-does not count toward Send, and the footer names the question in a warning. If sending fails, carried notes remain
-staged and removable. **Explore deeper** next to a question's title goes to
-the agent the moment you click it, and the pros and cons table for that question's options
-appears in the discussion panel when the agent is done. The agent answers
-threads, writes the tables, records your answers, and adds the next round of questions to
-the page.
-
-New questions say how much attention they deserve: an **importance level** (Skim, Check, Decide
-carefully, or Your call) with a one-line reason; **Levels** in the header explains them. The
-question list puts Decide carefully and Your call first within each round and labels only
-those two. Under each option a row of chips rates it on user experience, technical
-correctness, risk, and cost (green good, yellow mixed, red poor), so the trade-offs read at
-a glance; the agent swaps in its own axes at the start only when those clearly do not fit
-the topic. Unrated axes and axes that do not apply show no chip. A Your-call question is
-taste, so it shows the agent's **My lean** and no chips. Older questions without a level
-show no pill; **Levels** is hidden when no question has a level. Rounds without levels
-keep their original order; otherwise, unlevelled questions sort with Check, ties use
-natural question-id order, and the default open-question selection follows that order.
-
-**Visualize** in the header asks the agent for one picture of the design so far: an
-interactive HTML prototype when the topic is a UI, an architecture or flow diagram
-otherwise. When the topic is a change to an existing app, the prototype is drawn inside the
-real page it changes, with the app's own look. It appears in place of the question list and
-card, with its own feedback thread on the right. Undecided parts are drawn from the
-recommendations and marked "assumed"; feedback you add there ships with your next Send and
-redraws it; a note that contradicts an answered question reopens that question rather than
-silently changing your answer. Ordinary answers and question discussions do not regenerate
-the visual or delay the next round. When decisions change what it shows, it is marked
-**Out of date**; click **Regenerate** to include the latest decisions. Each requested redraw
-has a version number and a one-line change note. **Use subagent** is checked by default:
-the agent briefs a subagent so hundreds of lines of markup stay out of the interview's
-context. The draw runs in the background, so Send keeps working and the interview goes
-on while it is drawn; the header says
-Visualizing… (or the strip says regenerating…) until the new version lands. Once the
-grilling is done, untick **Use subagent** beside Visualize: the agent then draws inline in
-its own turn, which is faster, at the cost of the markup landing in its context and Send
-waiting until the draw is done. The choice is remembered per grill across reloads and
-is read when the request is sent, including for staged feedback. It applies to Visualize,
-Regenerate, feedback, and Finish reconciliation when a visual exists.
-The checkbox hides when the grill is finished. Finish reconciles and copies the final
-visual next to the design doc as
-`docs/<topic>-visual.html`.
-
-**Finish grill** sends at once (after an inline confirm), including the same pending items
-as Send; the agent writes the design doc to the path shown in the header (default
-`docs/<topic>-design.md` in your project) and stops.
-
-To pick up an unfinished grill, in the same project:
-
-```
-/grill-with-ui resume
-```
-
-If the agent crashed or was closed, sends you made in the meantime are replayed on resume,
-and the page tab you still have open reconnects on its own. Resume does not open a second
-tab; if you closed yours, open the URL the agent prints.
-
-An unfinished, reachable page shows **No agent is listening · sends will queue until it
-resumes** with a hollow amber dot when listener information confirms inactivity and the
-agent is not marked as working. A send then reads **Sent #N · queued until an agent listens**.
-The warning is hidden when listener information is unavailable; its absence alone does not
-guarantee that an agent is listening.
-
-## Files
-
-Session state lives outside your repo, so there is nothing to gitignore:
-
-```
-~/.grill-with-ui/
-  ui.json        global UI prefs shared by every grill (theme)
-  sessions/<project-key>/<YYYYMMDD-HHMMSS>/
-    state.json     written only by the agent, through `patch` (questions, recommendations, threads, status)
-    events.jsonl   appended only by the page, one line per Send
-    server.json    url, port and pid of the running server
-    listener.json  heartbeat written by a running `wait`
-    serve.log      server output from `serve --detach`
-    visual.html    the prototype or diagram, served at /visual
-```
-
-`<project-key>` is the git common root of the project with slashes turned into dashes, so
-every worktree of a repo sees the same sessions; outside git it is the working directory.
-
-In this repo: `server.mjs` (the server and CLI), `page.html` (the page), `SKILL.md` (the
-prompt the agent follows), `test/`, and `design/` + `docs/design.md` (how it was designed).
-`design/record-demo.mjs` re-records the GIF above by driving the real page; it needs
-Playwright and `ffmpeg`.
-
-## Server commands
-
-```
-node server.mjs new      --topic T [--doc P]                  create a session, print its folder
-node server.mjs serve    --session DIR [--port N] [--host ADDR | --lan] [--open | --open-command P] [--detach]
-                                                          serve the page; print one line per Send
-                                                          (--detach: in the background, output in serve.log)
-node server.mjs sessions [--all]                               list this project's sessions
-node server.mjs pending  --session DIR                         print sends past agent.handled
-node server.mjs wait     --session DIR [--after N] [--timeout S]  block until the next send (exit 3 on timeout)
-node server.mjs url      --session DIR [--timeout S] [--all]   print the running server's url (--all adds the LAN URL)
-node server.mjs patch    --session DIR [--file P]              apply a JSON patch (stdin or P) to state.json
-```
-
-Loopback is the default. Pass `--lan` when you answer from a second machine on the
-same network: the server listens on the LAN interface and `url` prints the LAN address
-next to localhost. Without `--lan` no LAN socket opens and no LAN URL prints, so a grill
-never reaches beyond its own machine by accident. LAN mode mints a random per-serve
-token and puts it in the LAN URL (`http://<ip>:<port>/?t=<token>`); every request from a
-non-loopback address needs it, including `/`, `/state`, `/visual`, `/events`, and `/send`,
-while loopback requests work exactly as before. Treat the LAN URL like a password: anyone
-with it can read the session and send to the agent, so share it only with the answering
-machine. The token is fresh on every serve.
-
-`--open` opens the live page in a browser once the server is listening. The skill passes it
-when it starts a grill, not on resume (your open tab reconnects) and not with `--lan` (you
-answer from the other machine). It is best effort: without a usable opener a one-line note
-goes to stderr, the server keeps running, and stdout carries the same ready-then-sends
-lines as ever. `--open-command P` runs `P` with the URL as its argument instead of the OS
-opener.
-
-`--detach` runs the same server in the background with its output in `serve.log`, prints
-its ready line (with `lanUrl` under `--lan`) once it listens, and exits. Every other flag
-goes to the background server, so `--open` opens the page once, from it. A server already
-running for the session is reported with `"already": true` instead of doubled, and opens
-nothing.
-
-`patch` merges by the rules in `SKILL.md` ("Patching state.json"). A bad patch exits
-non-zero and leaves the file untouched; a good one prints one short summary line, never the
-state.
-
-By default `serve` listens on 127.0.0.1. Every route requires a Host header matching
-`127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (case-insensitive), or the host of
-a URL the server printed (the LAN URL, or the `--host` address); other values receive 403.
-The IPv6 spelling is accepted as a header, but the server does not listen on `::1`. This
-prevents a web page that points its hostname at your machine (DNS rebinding) from reading
-the session. In LAN mode a request from a non-loopback address that carries a valid token
-may use any Host, so the page also works opened as `http://<name>.local:<port>/?t=<token>`;
-a loopback request never gets that pass. The port is required: avoid `--port 80`, since
-browsers omit that default port from Host and are refused. Local clients such as curl
-remain trusted: POSTs without an Origin header are allowed after the Host check.
-
-`/visual` is sent with `Content-Security-Policy: sandbox allow-scripts`: its scripts run
-with an opaque origin, even when opened in a separate tab. They cannot read the grill's
-session responses or submit an accepted Send. This sandbox does not disable networking;
-the [visual brief](visual-brief.md#the-file) defines the artifact's offline requirements.
-POST bodies over 1 MB on `/send` and `/theme` are refused with 413.
-
-`GRILL_HOME` overrides `~/.grill-with-ui`.
-
-## Tests
+本地变量 `HANDOVER_SERVER_URL` 可覆盖目标服务器；`HANDOVER_AGENT_TOKEN` 覆盖本地 Agent 凭据。`HANDOVER_CONFIG` 可指定其他配置文件。不要把凭据放进 Skill 或命令行参数。
 
 ```sh
-node --test test/server.test.mjs
-PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/page.e2e.mjs
-PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/manual-visual.e2e.mjs
-PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/subagent-toggle.e2e.mjs
-PLAYWRIGHT_PKG=/path/to/node_modules/@playwright/test/index.mjs node test/listener.e2e.mjs
+node cli.mjs config --show
+node cli.mjs config --server https://your-server.example:8024 --token-stdin
+node cli.mjs home
 ```
 
-The page check needs Playwright with Chromium; point `PLAYWRIGHT_PKG` at an existing install
-or run it with `@playwright/test` installed next to the repo. It starts a real server on a
-throwaway session and drives the page end to end (staging, reload, send, working state,
-server restart, finished state).
-The manual-visual check covers explicit regeneration and sandbox isolation both in the
-iframe and in a separate tab. The focused toggle check covers both drawing modes, the
-choice at Send time, and per-grill persistence. The listener check starts a `serve --detach`
-server and a real `wait`, and covers the page's "No agent is listening" status appearing,
-clearing, and returning. Set `GRILL_EVIDENCE_DIR` to save screenshots and send evidence
-from these browser checks.
+## 客户端协议
+
+Node.js 22.11+，客户端不需要第三方依赖。`CODEX_THREAD_ID` 或 `CLAUDE_SESSION_ID` 标识真实来源；其他客户端经核实后传 `--source-session`，不根据最近会话猜测。
+
+```sh
+node cli.mjs new --kind questionnaire --file /absolute/path/questions.json
+node cli.mjs new --kind feedback --topic '请反馈当前结果' --context '说明结果、待反馈事项和限制'
+node cli.mjs new --kind help --topic '需要帮助' --context '说明阻塞、证据、已尝试方法和所需信息'
+node cli.mjs wait --handle /absolute/path/handle.json --timeout 25
+node cli.mjs state --handle /absolute/path/handle.json
+node cli.mjs patch --handle /absolute/path/handle.json --file /absolute/path/patch.json
+node cli.mjs ack --handle /absolute/path/handle.json --seq 1
+node cli.mjs finish --handle /absolute/path/handle.json
+```
+
+创建返回绝对 handle 路径、请求 ID 和普通 URL，自动打开的登录链接只在浏览器片段携带一次性票据。handle 以 0600 保存，含每请求凭据和创建载荷；网络故障后 `resume --handle` 继续相同请求，不能重复创建。
+
+`wait` 最长 30 秒，退出 3 只表示本段没有答复，继续同一请求的下一段。每个请求只允许一个前台等待者。返回事件含 `requestId`、`sourceSession` 和连续 `seq`；读取不自动消费。先落实收到的真实答案、写回状态，再 `ack` 已处理的最高连续序号。中断后检查 `state` 与 `pending`，避免重复落实；`ack` 成功但响应丢失时，以服务端已确认游标为准。
+
+问题文件示例：
+
+```json
+{
+  "topic":"方案确认",
+  "context":"当前事实、目标及仍需决定的内容",
+  "questions":[{
+    "id":"q1","round":1,"title":"使用哪种方案？","body":"说明差异",
+    "options":[{"k":"A","text":"方案甲"},{"k":"B","text":"方案乙"}],
+    "rec":{"option":"A","why":"说明推荐理由与取舍"}
+  }]
+}
+```
+
+支持增量 `patch` 追加新题与讨论，沿用上游状态模型；同一访谈后续轮次不复用题目 ID。选项推荐没有预选，不会自动提交。`thread` 是讨论，`finish` 是结束问答，均不自动授权实施。仅真实用户答复才能解除依赖该答复的工作。
+
+## 本地开发与验证
+
+服务端使用 Node.js 22.11+、Python 3.12+；仅依赖 `web-push`，锁文件固定版本。
+
+```sh
+npm ci --ignore-scripts
+# 在受限环境文件中设置 .env.example 的变量，再运行：
+npm start
+npm test
+# 另行提供已安装的 Playwright 与 Chromium：
+PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium npm run test:browser
+```
+
+测试使用隔离临时目录和虚构来源，不向真实会话伪造答复。测试涵盖上游兼容、认证、来源隔离、幂等、恢复、前台等待、推送调度、Webhook 与回滚；浏览器检查手机/平板布局、多选、草稿、重复提交及缓存边界。真实手机安装与系统通知许可需在设备上验收。
+
+## 目录
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/` | 远端 HTTP 服务、原子持久化、身份与事件隔离 |
+| `web/` | 手机收件箱、PWA、推送与上游页面的适配层 |
+| `skills/` | 两份 Skill 与通用客户端 |
+| `deploy/` | 首装、Webhook、systemd、独立版本发布和回滚 |
+| `page.html`、`server.mjs` | 保留的上游界面、校验和原始回归服务 |
+| `docs/upstream-*` | 原始 Skill 与 README 的来源存档，不用于本机安装 |

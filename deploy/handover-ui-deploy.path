@@ -1,0 +1,9 @@
+[Unit]
+Description=Activate handover UI deployer when signed push events arrive
+
+[Path]
+PathExistsGlob=/var/lib/handover-ui-deploy/pending/*.json
+Unit=handover-ui-deploy.service
+
+[Install]
+WantedBy=multi-user.target

@@ -799,6 +799,9 @@ function cmdPatch(o) {
   print({ ok: true, questions: qs.length, open: qs.filter(isOpen).length, handled: Number(next.agent && next.agent.handled) || 0, bytes });
 }
 
+export { applyPatch, validateState, validateAxesChange };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === SELF) {
 const o = parseArgs(process.argv.slice(2));
 const cmds = { new: cmdNew, serve: cmdServe, sessions: cmdSessions, pending: cmdPending, wait: cmdWait, url: cmdUrl, patch: cmdPatch };
 // own keys only: `toString` and friends are inherited, not subcommands
@@ -806,3 +809,4 @@ const cmds = { new: cmdNew, serve: cmdServe, sessions: cmdSessions, pending: cmd
 Promise.resolve((Object.hasOwn(cmds, o._[0] ?? "") ? cmds[o._[0]]
   : () => die("usage: server.mjs new|serve|sessions|pending|wait|url|patch [--session DIR] ..."))(o))
   .catch((e) => die(oneLine(e && e.message ? e.message : e), 1));
+}
