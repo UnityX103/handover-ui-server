@@ -27,7 +27,7 @@ function serverUrl(value) {
   return url.origin;
 }
 const username = (value) => { if(typeof value!=='string'|| !/^[A-Za-z0-9_-]{1,64}$/.test(value))throw new Error('用户名应为 1–64 个英文字母、数字、下划线或短横线');return value; };
-const requestUrl = (cfg,id='') => cfg.serverUrl+(id?`/grill/${encodeURIComponent(id)}/`:'/')+(cfg.username?'?username='+encodeURIComponent(cfg.username):'');
+const requestUrl = (cfg,id='') => cfg.serverUrl+(id?`/grill/${encodeURIComponent(id)}/`:'/')+(cfg.username?'?username='+encodeURIComponent(cfg.username):(id?'':'?mode=legacy'));
 function config() {
   const saved=read(configFile(),{});
   const url=process.env.HANDOVER_SERVER_URL||saved.serverUrl;

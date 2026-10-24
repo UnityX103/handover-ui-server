@@ -79,7 +79,7 @@ try {
   const vmRegression=await exec(process.execPath,[path.join(root,'.agents/skills/mida-resource-packaging/scripts/test_review_ui.cjs'),resourceFixture.manifest]);assert.match(vmRegression.stdout,/PASS/);
   const resourceReceipt = await run(['publish', '--manifest', resourceFixture.manifest, '--html', resourceFixture.html, '--client', cli, '--no-open'], environment, resourceRoot);
   assert.equal(resourceReceipt.transport, 'remote'); receipts.push({ ...resourceReceipt, resource: true });
-  await page.goto(base);
+  await page.goto(base + '/?mode=legacy');
   await page.locator('#login-code').fill(adminToken); await page.locator('#login-form button').click();
   for (const [index, receipt] of receipts.entries()) {
     await page.goto(base + new URL(receipt.url).pathname);
@@ -120,7 +120,7 @@ try {
       assert.equal(new URL(page.url()).pathname, `/grill/${receipt.requestId}/`);
     } else {
       await page.reload(); await page.frameLocator('#page').locator('body').waitFor();
-      await scoped(receipt, '/ack', { seq: 1 }); await page.waitForURL(base + '/');
+      await scoped(receipt, '/ack', { seq: 1 }); await page.waitForURL(base + '/?mode=legacy');
     }
   }
   // Offline pages retain the same JSON export contract with no remote SDK.

@@ -25,6 +25,8 @@ try {
  const a=request(); await api('/api/requests',a);
  const other=request({username:'Other',topic:'Must not appear'});await api('/api/requests',other,'POST','Other');
  await page.goto(base+'/?username=Xpy');
+ assert.equal(await page.locator('#username').inputValue(),'');
+ await page.locator('#username').fill('Xpy');await page.locator('#username-form button').click();
  await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).waitFor();
  assert.equal(await page.locator('a.request').count(),1);assert.equal(await page.locator('#settings-toggle').isVisible(),false);await fit();
  await page.locator('a.request').click();await page.locator('#free').fill('Synthetic answer');await page.locator('#stage-text').click();await page.locator('#send').click();
@@ -40,5 +42,7 @@ try {
  await api(`/api/requests/${custom.id}/ack`,{seq:1});await page.waitForURL(base+'/?username=Xpy');
  assert.equal((await context.cookies()).length,0,'public browser must receive no owner cookie');
  assert.ok(!urls.some((url)=>/^\/api\/(login|browser-tickets|subscriptions|pairing-tickets)/.test(url)),JSON.stringify(urls));
+ await page.reload();assert.equal(await page.locator('#username-panel').isVisible(),false);
+ await page.locator('#username-logout').click();await page.waitForURL(base+'/');assert.equal(await page.locator('#username').inputValue(),'');
  assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question answer/ack scoped return, custom JSON bridge, no owner routes/cookie');
 } finally {await browser.close();app.server.closeAllConnections();await new Promise((resolve)=>app.server.close(resolve));fs.rmSync(dir,{recursive:true,force:true});}

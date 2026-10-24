@@ -33,7 +33,7 @@ try {
   a.questions = [{ id: 'q1', round: 1, title: '多选问题：请选择测试选项', body: '仅为测试数据，不表示人的真实决定。', multi: true, options: [{ k: 'A', text: '测试甲' }, { k: 'B', text: '测试乙' }, { k: 'C', text: '测试丙' }], rec: { options: ['A'], why: '只用于检查推荐不会自动提交' } }];
   const b = request('feedback', 'isolated-browser-source-b');
   await api('/api/requests', a); await api('/api/requests', b);
-  await page.goto(url);
+  await page.goto(url + '/?mode=legacy');
   await page.locator('#login-code').fill(adminToken);
   await page.locator('#login-form button').click();
   await page.locator(`a.request[href="/grill/${a.id}/"]`).waitFor();
@@ -67,7 +67,7 @@ try {
   await page.locator('.opt.pending').first().waitFor();
   await scoped(a, '', { questions: [{ id: 'q1', status: 'answered', answer: { kind: 'option', options: ['B', 'C'] } }], agent: { status: 'waiting' } }, 'PATCH');
   await scoped(a, '/ack', { seq: 1 });
-  await page.waitForURL(url + '/');
+  await page.waitForURL(url + '/?mode=legacy');
   await page.goto(`${url}/grill/${a.id}/`);
   await page.waitForFunction(() => document.querySelectorAll('.opt.chosen').length === 2);
   // Independent feedback receives no draft or pending answer from request a.
@@ -90,7 +90,7 @@ try {
   // Same content can be submitted again after the first event was actually handled.
   await scoped(b, '', { questions: [{ id: 'q1', status: 'answered', answer: { kind: 'text', text: '隔离反馈内容' } }], agent: { status: 'waiting' } }, 'PATCH');
   await scoped(b, '/ack', { seq: 1 });
-  await page.waitForURL(url + '/');
+  await page.waitForURL(url + '/?mode=legacy');
   await page.goto(`${url}/grill/${b.id}/`); await page.locator('#free').waitFor();
   await page.locator('#free').fill('隔离反馈内容'); await page.locator('#stage-text').click(); await page.locator('#send').click();
   const repeated = await scoped(b, '/wait?timeout=0', null, 'GET');
@@ -110,19 +110,19 @@ try {
   assert.equal(new URL(page.url()).pathname, `/grill/${c.id}/`);
   assert.equal((await scoped(c, '/wait?timeout=0', null, 'GET')).events.length, 0);
   await page.unroute(`**/grill/${c.id}/send`);
-  await page.goto(url); await page.locator('#settings-toggle').click(); await page.locator('#pair').click();
+  await page.goto(url + '/?mode=legacy'); await page.locator('#settings-toggle').click(); await page.locator('#pair').click();
   await page.locator('#pairing').waitFor(); assert.match(await page.locator('#pairing').textContent(), /[0-9A-F]{16}/);
   const loginCode=(await page.locator('#pairing').textContent()).match(/[0-9A-F]{16}/)[0];
   await page.locator('#pair').click();assert.ok((await page.locator('#pairing').textContent()).includes(loginCode));
   await page.locator('#logout').click();
   await page.goto(`${url}/grill/${a.id}/`);
-  await page.waitForURL(url + '/?request=' + a.id);
+  await page.waitForURL(url + '/?mode=legacy&request=' + a.id);
   await page.locator('#login-code').fill(loginCode); await page.locator('#login-form button').click();
   await page.waitForURL(`${url}/grill/${a.id}/`); await page.locator('.opt.chosen').first().waitFor();
-  await page.goto(url);
+  await page.goto(url + '/?mode=legacy');
   await page.evaluate((id) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { type: 'handover:navigate', url: '/grill/' + id + '/' } })), b.id);
   await page.waitForURL(`${url}/grill/${b.id}/`); await page.locator('#free').waitFor();
-  await page.goto(url); await page.locator('#workspace').waitFor();
+  await page.goto(url + '/?mode=legacy'); await page.locator('#workspace').waitFor();
   const worker = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
   assert.equal(worker, url + '/sw.js');
   const cached = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (key) => (await (await caches.open(key)).keys()).map((req) => new URL(req.url).pathname)))).flat());
