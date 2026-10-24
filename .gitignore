@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+graphify-out/
+.env
+.env.*
+!.env.example
+data/
+coverage/
+test-results/
+playwright-report/
+.local/
+__pycache__/
+*.pyc

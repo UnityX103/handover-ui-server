@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "files": [
+    "skills/grill-with-ui/SKILL.md",
+    "skills/grill-with-ui/scripts/handover.mjs",
+    "skills/grill-with-ui/scripts/update.mjs",
+    "skills/grill-with-ui/scripts/install.mjs",
+    "skills/grill-with-ui/references/custom-pages.md",
+    "skills/remote-handover/SKILL.md",
+    "scripts/grill-with-docs-ui.md"
+  ]
+}

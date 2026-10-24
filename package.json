@@ -1,0 +1,17 @@
+{
+  "name": "handover-ui-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "远程问卷、反馈与求助交接服务",
+  "engines": { "node": ">=22.11" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs && python3 -m unittest discover -s test -p 'test_*.py'",
+    "test:remote": "node --test test/remote.test.mjs",
+    "test:browser": "node test/remote.e2e.mjs",
+    "test:bridge": "node test/custom-page.e2e.mjs",
+    "install:skills": "node scripts/install-skills.mjs"
+  },
+  "dependencies": { "web-push": "3.6.7" }
+}
