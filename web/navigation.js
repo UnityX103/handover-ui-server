@@ -34,6 +34,37 @@ window.HandoverPush = (() => {
   return {bind,remember,clear,marker,active,login,transaction,epoch,restore};
 })();
 
+// Unread state is local UI metadata only; never mutates server requests or replies.
+window.HandoverUnread = (() => {
+  const epoch=()=>localStorage.getItem('handover:identity-epoch')||'0';
+  const choice=()=>localStorage.getItem('handover:username')||null;
+  const valid=(name,version)=>choice()===name&&epoch()===version;
+  const setBadge=async count=>{try{if(count)await navigator.setAppBadge?.(count);else await navigator.clearAppBadge?.();}catch{}};
+  const fallback=async data=>{
+    const key='handover:unread-seen:'+data.username;let seen;try{seen=JSON.parse(localStorage.getItem(key))||{};}catch{seen={};}
+    if(data.action==='identity'){if(data.username===null)await setBadge(0);return{ok:true};}
+    const itemsKey='handover:unread-items:'+data.username;let items;try{items=JSON.parse(localStorage.getItem(itemsKey))||[];}catch{items=[];}
+    if(data.action==='sync'){items=data.items||[];localStorage.setItem(itemsKey,JSON.stringify(items));}
+    if(data.action==='snapshot')return{ok:true,known:items.filter(item=>item.waiting&&(Number(item.version)||1)>(seen[item.id]||0))};
+    if(data.action==='clear'){for(const item of [...(data.items||[]).filter(x=>x.waiting),...(data.known||[])])seen[item.id]=Math.max(seen[item.id]||0,Number(item.version)||1);localStorage.setItem(key,JSON.stringify(seen));}
+    const count=items.filter(item=>item.waiting&&(Number(item.version)||1)>(seen[item.id]||0)).length;
+    await setBadge(count);return{ok:true,count};
+  };
+  const send=async data=>{
+    if(!valid(data.username,String(data.epoch)))throw new Error('用户名已变更，未操作其他用户的未读提示');
+    let registration=null;
+    if('serviceWorker'in navigator){let timer;try{registration=await Promise.race([navigator.serviceWorker.ready,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),1000);})]);}finally{clearTimeout(timer);}}
+    if(!valid(data.username,String(data.epoch)))throw new Error('用户名已变更');
+    if(!registration?.active)return fallback(data);
+    try{data.localSeen=JSON.parse(localStorage.getItem('handover:unread-seen:'+data.username))||{};}catch{data.localSeen={};}
+    return new Promise((resolve,reject)=>{const channel=new MessageChannel(),timer=setTimeout(()=>done(new Error('未读状态保存超时，请重试')),5000);const done=(error,result)=>{clearTimeout(timer);channel.port1.close();channel.port2.close();error?reject(error):resolve(result);};channel.port1.onmessage=event=>done(event.data?.ok?null:new Error('未读状态未保存，请重试'),event.data);registration.active.postMessage({type:'handover:unread',...data},[channel.port2]);});
+  };
+  const sync=(name,items)=>send({action:'sync',username:name,epoch:epoch(),items});
+  const clear=async(name,items)=>{const version=epoch();const snapshot=await send({action:'snapshot',username:name,epoch:version});const result=await send({action:'clear',username:name,epoch:version,items,known:snapshot.known});if(valid(name,version)){const key='handover:unread-seen:'+name;let seen;try{seen=JSON.parse(localStorage.getItem(key))||{};}catch{seen={};}for(const item of [...items.filter(x=>x.waiting),...(snapshot.known||[])])seen[item.id]=Math.max(seen[item.id]||0,Number(item.version)||1);localStorage.setItem(key,JSON.stringify(seen));}return result;};
+  const identity=(name)=>send({action:'identity',username:name,epoch:epoch()});
+  return{sync,clear,identity};
+})();
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', (event) => {
     if (event.data?.type !== 'handover:navigate') return;
@@ -64,7 +95,7 @@ if (/^\/grill\/[A-Za-z0-9_-]{8,100}\/$/.test(location.pathname)) {
     window.addEventListener('pageshow',check);window.addEventListener('storage',(event)=>{if(['handover:username','handover:identity-epoch'].includes(event.key))check();});
     if (check()) {
       const button = document.createElement('button'); button.id = 'username-logout'; button.type = 'button'; button.textContent = '退出用户名';
-      button.onclick = async () => { if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if (!window.confirm('退出当前用户名？未提交的编辑可能丢失；已保存的草稿会保留。')) return; button.disabled = true; try { await window.HandoverPush.clear(target,pageEpoch); if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if(localStorage.getItem('handover:username')===target){localStorage.setItem('handover:identity-epoch',String(Number(localStorage.getItem('handover:identity-epoch')||0)+1));localStorage.setItem('handover:username','');}sessionStorage.removeItem('handover:username'); document.documentElement.hidden = true; location.replace('/'); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; } };
+      button.onclick = async () => { if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if (!window.confirm('退出当前用户名？未提交的编辑可能丢失；已保存的草稿会保留。')) return; button.disabled = true; try { await window.HandoverPush.clear(target,pageEpoch); if((localStorage.getItem('handover:identity-epoch')||'0')!==pageEpoch){location.replace('/');return;} if(localStorage.getItem('handover:username')===target){localStorage.setItem('handover:identity-epoch',String(Number(localStorage.getItem('handover:identity-epoch')||0)+1));localStorage.setItem('handover:username','');}sessionStorage.removeItem('handover:username'); await window.HandoverUnread.identity(null).catch(()=>{}); document.documentElement.hidden = true; location.replace('/'); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; } };
       document.querySelector('header')?.append(button);
     }
   }

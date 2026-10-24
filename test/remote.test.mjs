@@ -34,25 +34,25 @@ async function fixture(t, extra = {}) {
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   t.after(async () => { app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true }); });
-  const call = async (route, { data, method = data ? 'POST' : 'GET', key, source, cookie, origin } = {}) => {
-    const headers = {}; if (data) headers['Content-Type'] = 'application/json'; if (key) headers.Authorization = `Bearer ${key}`; if(source)headers['X-Handover-Source']=source;if(cookie)headers.Cookie=cookie;if(origin)headers.Origin=origin;
+  const call = async (route, { data, method = data ? 'POST' : 'GET', key, source, cookie, origin, username = (key || cookie) ? 'Xpy' : undefined } = {}) => {
+    const headers = {}; if(username) headers['X-Handover-Username']=username; if (data) headers['Content-Type'] = 'application/json'; if (key) headers.Authorization = `Bearer ${key}`; if(source)headers['X-Handover-Source']=source;if(cookie)headers.Cookie=cookie;if(origin)headers.Origin=origin;
     const response = await fetch(url + route, { method, headers, body: data ? JSON.stringify(data) : undefined, redirect: 'manual' });
     const raw = await response.text(); let body; try { body = JSON.parse(raw); } catch { body = raw; }
     return { status: response.status, headers: response.headers, body };
   };
-  const payload = (session = 'test-source-one') => ({ id: crypto.randomUUID(), requestToken: crypto.randomBytes(32).toString('base64url'), kind: 'questionnaire', topic: '测试隔离用问卷', source: { session, project: '/test/project', machine: 'isolated-fixture' }, questions: [{ id: 'q1', round: 1, title: '测试选项', options: [{k:'A',text:'测试甲'},{k:'B',text:'测试乙'}], rec:{option:'A',why:'仅为隔离测试数据'} }] });
+  const payload = (session = 'test-source-one') => ({ username: 'Xpy', id: crypto.randomUUID(), requestToken: crypto.randomBytes(32).toString('base64url'), kind: 'questionnaire', topic: '测试隔离用问卷', source: { session, project: '/test/project', machine: 'isolated-fixture' }, questions: [{ id: 'q1', round: 1, title: '测试选项', options: [{k:'A',text:'测试甲'},{k:'B',text:'测试乙'}], rec:{option:'A',why:'仅为隔离测试数据'} }] });
   const create = async (p = payload()) => { const result = await call('/api/requests', {key:agentToken,data:p}); assert.equal(result.status,201); return p; };
-  const login = async () => { const r = await call('/api/login',{data:{token:adminToken}});assert.equal(r.status,200);return r.headers.get('set-cookie').split(';')[0]; };
+  const login = async () => 'username-test-session';
   const scoped = (r, route = '', options = {}) => call(`/api/requests/${r.id}${route}`, {key:r.requestToken,source:r.source.session,...options});
   const send = (r, cookie, id = crypto.randomUUID(), actions = [{q:'q1',type:'answer',kind:'option',option:'B'}]) => call(`/grill/${r.id}/send`,{cookie,data:{submissionId:id,actions}});
   return {...app,dir,url,call,payload,create,login,scoped,send};
 }
 
-test('远端认证：未登录不能读问卷，错误 Agent 或来源不能读写请求', async (t) => {
+test('用户名分类：无用户名不可读问卷，跨用户名及错误来源不能读写请求', async (t) => {
   const f=await fixture(t),r=await f.create();
-  assert.equal((await f.call('/api/requests')).status,401);
-  assert.equal((await f.call(`/grill/${r.id}/state`)).status,401);
-  assert.equal((await f.call(`/api/requests/${r.id}`,{key:agentToken,source:r.source.session})).status,403);
+  assert.equal((await f.call('/api/requests')).status,403);
+  assert.equal((await f.call(`/grill/${r.id}/state`)).status,403);
+  assert.equal((await f.call(`/api/requests/${r.id}`,{key:agentToken,source:r.source.session,username:'Other'})).status,404);
   assert.equal((await f.scoped(r,'',{source:'other-source'})).status,403);
   assert.equal((await f.call('/api/requests',{key:agentToken,data:f.payload(),origin:'https://attacker.invalid'})).status,403);
   const result=await f.scoped(r);assert.equal(result.body.source.session,r.source.session);assert.equal(result.body.tokenHash,undefined);
@@ -110,42 +110,29 @@ test('真实问题校验：未知题、未知选项和空答复不能解除等�
   assert.equal((await f.scoped(r,'',{method:'PATCH',data:{agent:{handled:1}}})).status,400);
 });
 
-test('登录链接一次性，固定登录码可重复使用且服务重建后不变',async(t)=>{
-  const f=await fixture(t),r=await f.create();
-  const ticket=await f.call('/api/browser-tickets',{key:agentToken,data:{requestId:r.id}}),value=new URL(ticket.body.loginUrl).hash.slice(8);
-  assert.equal((await f.call('/api/login/ticket',{data:{ticket:value}})).status,200);
-  assert.equal((await f.call('/api/login/ticket',{data:{ticket:value}})).status,401);
-  assert.equal((await f.call('/api/login-code',{data:{}})).status,401);
-  const cookie=await f.login(),pair=await f.call('/api/login-code',{cookie,data:{}});
-  assert.match(pair.body.code,/^[0-9A-F]{16}$/);
-  assert.equal(pair.body.expiresIn,null);assert.equal(pair.body.reusable,true);
-  assert.equal((await f.call('/api/pairing-tickets',{cookie,data:{}})).body.code,pair.body.code);
-  assert.equal(fs.readFileSync(path.join(f.dir,'tickets.json'),'utf8').includes(pair.body.code),false);
-  assert.equal((await f.call('/api/login',{data:{token:pair.body.code}})).status,200);
-  assert.equal((await f.call('/api/login',{data:{token:pair.body.code}})).status,200);
-  const restarted=createHandoverServer({...f.config,dataDir:f.dir});
-  assert.equal(restarted.store.all('login-code').code,pair.body.code);
-  assert.equal(fs.statSync(path.join(f.dir,'login-code.json')).mode&0o077,0);
+test('旧登录和票据端点退休：凭据不能创建会话或票据，启动不生成登录码',async(t)=>{
+  const f=await fixture(t);
+  assert.equal(fs.existsSync(path.join(f.dir,'login-code.json')),false);
+  for(const route of ['/api/login','/api/login/ticket','/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/logout']){
+    const result=await f.call(route,{key:agentToken,cookie:'handover_session=old',data:{token:adminToken,ticket:'old'}});
+    assert.equal(result.status,410,route);assert.equal(result.headers.get('set-cookie'),null);
+  }
+  assert.deepEqual(f.store.all('sessions'),{});assert.deepEqual(f.store.all('tickets'),{});
 });
 
-test('自定义固定登录码在新实例中生效，区分大小写并保留已有登录',async(t)=>{
-  const f=await fixture(t),cookie=await f.login(),previous=f.store.all('login-code'),customCode='Test9aBcD';
-  f.store.save('login-code',{...previous,code:customCode});
+test('退休不改写已有凭据、会话和旧请求；旧请求不能由用户名或旧凭据读取',async(t)=>{
+  const f=await fixture(t),r=await f.create(),record=f.store.get(r.id);
+  delete record.username;delete record.accessMode;record.tokenHash=crypto.createHash('sha256').update(r.requestToken).digest('hex');f.store.put(record);
+  const previous={code:'Existing9Code',created:123};f.store.save('login-code',previous);f.store.save('sessions',{old:{expires:Date.now()+60000}});
+  const before=fs.readFileSync(path.join(f.dir,'requests',r.id+'.json'),'utf8');
   const restarted=createHandoverServer(f.config);
-  await new Promise((resolve)=>restarted.server.listen(0,'127.0.0.1',resolve));
-  t.after(async()=>{restarted.server.closeAllConnections();await new Promise((resolve)=>restarted.server.close(resolve));});
-  const url=`http://127.0.0.1:${restarted.server.address().port}`;
-  const login=(code)=>fetch(url+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:code})});
-  assert.equal((await login(previous.code)).status,401);
-  assert.equal((await login(customCode.toLowerCase())).status,401);
-  assert.equal((await login(customCode)).status,200);
-  assert.equal((await login(customCode)).status,200);
-  const me=await fetch(url+'/api/me',{headers:{Cookie:cookie}});
-  assert.equal((await me.json()).authenticated,true);
-  const saved=restarted.store.all('login-code');
-  assert.equal(saved.code,customCode);assert.equal(saved.created,previous.created);
-  assert.equal(createHandoverServer(f.config).store.all('login-code').code,customCode);
-  assert.equal(fs.statSync(path.join(f.dir,'login-code.json')).mode&0o077,0);
+  assert.equal(fs.readFileSync(path.join(f.dir,'requests',r.id+'.json'),'utf8'),before);
+  assert.equal(await restarted.notify(record),0);
+  assert.deepEqual(restarted.store.all('login-code'),previous);assert.deepEqual(restarted.store.all('sessions'),f.store.all('sessions'));
+  assert.deepEqual((await f.call('/api/requests',{username:'Xpy'})).body.requests,[]);
+  assert.equal((await f.scoped(r)).status,404);
+  assert.equal((await f.call(`/api/requests/${r.id}`,{key:r.requestToken,source:r.source.session,username:null})).status,403);
+  assert.equal((await f.call('/api/login',{data:{token:previous.code}})).status,410);
 });
 
 test('反馈、求助与取消：没有预选答案，取消会结束等待',async(t)=>{
@@ -165,8 +152,8 @@ test('推送订阅与新请求：仅向有效订阅发送，创建重试不会�
   assert.equal((await f.call('/api/subscriptions',{cookie,data:{...sub,endpoint:'https://127.0.0.1/internal'}})).status,400);
   assert.equal((await f.call('/api/subscriptions',{cookie,data:sub})).status,200);
   const r=await f.create();await f.call('/api/requests',{key:agentToken,data:r});
-  assert.equal(messages.length,1);assert.equal(messages[0].url,`/grill/${r.id}/`);
-  await f.call('/api/logout',{cookie,data:{}});assert.deepEqual(f.store.all('subscriptions'),{});
+  assert.equal(messages.length,1);assert.equal(messages[0].url,`/grill/${r.id}/?username=Xpy`);
+  await f.call('/api/subscriptions',{cookie,method:'DELETE',data:sub});assert.deepEqual(f.store.all('subscriptions'),{});
 });
 
 test('原 Grill 页面通过请求路由复用，脚本语法、离线边界和可视化沙箱有效',async(t)=>{
@@ -179,7 +166,7 @@ test('原 Grill 页面通过请求路由复用，脚本语法、离线边界和�
 });
 
 test('通用客户端：前台超时退出 3、来源校验、恢复和显式确认消费',async(t)=>{
-  const f=await fixture(t),home=path.join(f.dir,'client'),env={...process.env,CODEX_THREAD_ID:'cli-fixture-one',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:undefined,HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:home,HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'1'};
+  const f=await fixture(t),home=path.join(f.dir,'client'),env={...process.env,CODEX_THREAD_ID:'cli-fixture-one',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:'Xpy',HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:home,HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'1'};
   const cli=path.resolve('skills/grill-with-ui/scripts/handover.mjs');
   const run=async(args,extra={})=>{try{const r=await exec(process.execPath,[cli,...args],{env:{...env,...extra}});return {code:0,data:JSON.parse(r.stdout)};}catch(e){return {code:e.code,data:JSON.parse(e.stdout)};}};
   const created=await run(['new','--kind','help','--topic','客户端隔离测试','--no-open']);assert.equal(created.code,0);const handle=created.data.handle;
@@ -205,7 +192,7 @@ const args=process.argv.slice(2);fs.appendFileSync(process.env.HANDOVER_TEST_GIT
 if(args[1].endsWith('/commits/main'))process.stdout.write(fixture.version+'\\n');
 else {const target=new URL('https://api.github.com/'+args.at(-1));if(target.searchParams.get('ref')!==fixture.version)process.exit(1);const file=target.pathname.split('/contents/')[1];process.stdout.write(file==='skills/manifest.json'?JSON.stringify(fixture.manifest):fixture.files[file]);}
 `,{mode:0o700});
-  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:undefined,HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',HANDOVER_TEST_GITHUB_FIXTURE:snapshot,HANDOVER_TEST_GITHUB_CALLS:calls};
+  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:'Xpy',HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',HANDOVER_TEST_GITHUB_FIXTURE:snapshot,HANDOVER_TEST_GITHUB_CALLS:calls};
   const cli=path.resolve('skills/grill-with-ui/scripts/handover.mjs');
   const created=await exec(process.execPath,[cli,'new','--kind','help','--topic','更新后创建隔离请求','--no-open'],{env});
   const result=JSON.parse(created.stdout);

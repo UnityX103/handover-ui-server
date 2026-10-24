@@ -7,7 +7,7 @@
   const username = new URLSearchParams(location.search).get('username');
   if (username !== null && (localStorage.getItem('handover:username') !== username || (localStorage.getItem('handover:identity-epoch')||'0')!==identityEpoch)) { location.replace('/?' + new URLSearchParams({username,request:id})); return; }
   const query = username === null ? '' : '?' + new URLSearchParams({username});
-  const home = username === null ? '/?mode=legacy' : '/' + query; document.querySelector('header a').href = home;
+  const home = username === null ? '/' : '/' + query; document.querySelector('header a').href = home;
   const route = `/grill/${id}/`, channel = crypto.randomUUID(), storageKey = `handover:custom:${id}${query}`;
   let revision = 0, pending, handled = 0, closed = false, submitting = false, cancelled = false;
   try { pending = JSON.parse(localStorage.getItem(storageKey)); revision = pending?.currentRevision || 0; } catch {}
@@ -32,10 +32,15 @@
   });
   const flush = async () => {
     if (cancelled) throw new Error('此请求已取消，可导出当前内容');
+    if (closed || submitting) throw new Error('正在提交或已提交，请稍候');
     submitting = true; retry.disabled = true; status.textContent = '正在保存答复…';
     try {
       const saved = await api('feedback', { submissionId: pending.submissionId, feedbackType: info.page.feedbackType, pageHash: info.page.pageHash, payload: JSON.parse(pending.serialized) });
-      pending.seq = saved.seq; persist(); retry.hidden = true; if (!cancelled) status.textContent = '答复已保存，等待来源 Agent 确认'; return saved;
+      if (!saved?.ok || saved.saved !== true || !Number.isSafeInteger(saved.seq) || saved.seq <= 0) throw new Error('服务端尚未确认保存，请重试原内容');
+      pending.seq = saved.seq; persist(); retry.hidden = true;
+      if (!cancelled && revision > pending.revision) { status.textContent='答复已保存；保留发送期间新增的内容。'; }
+      else if (!cancelled) { closed = true; status.textContent = '答复已保存，正在返回列表'; setTimeout(()=>{if(!cancelled && (username===null || localStorage.getItem('handover:username')===username && (localStorage.getItem('handover:identity-epoch')||'0')===identityEpoch))location.replace(home);},0); }
+      return saved;
     } catch (error) { retry.hidden = cancelled; throw error; }
     finally { submitting = false; retry.disabled = false; }
   };
@@ -51,7 +56,7 @@
     if (data.type !== 'handover:submit' || typeof data.messageId !== 'string') return;
     const result = (value) => tell({ type: 'handover:result', messageId: data.messageId, ...value });
     if (cancelled) { result({ok:false,error:'此请求已取消，可导出当前内容'}); return; }
-    if (submitting) { result({ ok: false, error: '正在提交，请稍候' }); return; }
+    if (submitting || closed) { result({ ok: false, error: '正在提交，请稍候' }); return; }
     try {
       if (!data.payload || typeof data.payload !== 'object') throw new Error('需要 JSON 对象或数组');
       const serialized = JSON.stringify(data.payload);
@@ -71,12 +76,7 @@
       const current = await api('bridge'); handled = current.handled;
       if (current.status === 'cancelled') { showCancellation(current); return; }
       if (current.status === 'completed') cancel.disabled = true;
-      if (pending?.seq && handled >= pending.seq) {
-        const edited = revision > pending.revision;
-        pending = undefined; persist();
-        if (!edited) { closed = true; location.replace(home); return; }
-        status.textContent = '来源 Agent 已收到；保留你新写入的内容';
-      }
+      if (Number.isSafeInteger(pending?.seq) && pending.seq > 0 && handled >= pending.seq) { pending=undefined;persist(); }
     } catch { status.textContent = '连接中断；保留页面，可稍后重试或导出 JSON'; }
     if (!closed) setTimeout(poll, 1500);
   };

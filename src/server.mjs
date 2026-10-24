@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import webpush from 'web-push';
 import { applyPatch, validateState, validateAxesChange } from '../server.mjs';
-import { Store, atomic, hash, equal, token, now, validId } from './store.mjs';
+import { Store, atomic, hash, equal, now, validId } from './store.mjs';
 import { customLimits, customPage, pageInfo, validateFeedback, customCsp, customContent } from './custom-page.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -15,9 +15,10 @@ const kinds = ['questionnaire', 'feedback', 'help'];
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const text = (v, max = 4000) => typeof v === 'string' && v.length <= max;
 // Receipt consumption is not an Agent reply; this independent phase survives ack.
+const attentionVersion = (r) => Number.isSafeInteger(r.userAttentionVersion) && r.userAttentionVersion > 0 ? r.userAttentionVersion : 1;
 const awaitingReply = (r) => typeof r.awaitingReply === 'boolean' ? r.awaitingReply : r.status === 'submitted';
 const waitingFor = (r) => ['completed', 'cancelled'].includes(r.status) || r.state.finished ? null : awaitingReply(r) ? 'agent' : 'user';
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, waitingFor: waitingFor(r), ...(r.cancellation ? {cancellation:r.cancellation} : {}), lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
+const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, waitingFor: waitingFor(r), userAttentionVersion: attentionVersion(r), ...(r.cancellation ? {cancellation:r.cancellation} : {}), lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
 
 function actionsValid(actions, state) {
   if (!Array.isArray(actions) || !actions.length || actions.length > 100) fail(400, 'actions 应为 1–100 个操作');
@@ -43,22 +44,17 @@ export function createHandoverServer(options = {}) {
     host: process.env.HANDOVER_HOST || '127.0.0.1', port: Number(process.env.HANDOVER_PORT || 8025),
     publicUrl: process.env.HANDOVER_PUBLIC_URL || 'http://127.0.0.1:8025',
     dataDir: process.env.HANDOVER_DATA_DIR || path.join(os.homedir(), '.local/share/handover-ui'),
-    agentToken: process.env.HANDOVER_AGENT_TOKEN, adminToken: process.env.HANDOVER_ADMIN_TOKEN,
-    loginCode: process.env.HANDOVER_LOGIN_CODE,
+    adminToken: process.env.HANDOVER_ADMIN_TOKEN,
     vapidPublicKey: process.env.HANDOVER_VAPID_PUBLIC_KEY, vapidPrivateKey: process.env.HANDOVER_VAPID_PRIVATE_KEY,
     vapidSubject: process.env.HANDOVER_VAPID_SUBJECT, ...options,
   };
-  if ((config.agentToken !== undefined && config.agentToken !== '' && (!text(config.agentToken) || config.agentToken.length < 32)) || !text(config.adminToken) || config.adminToken.length < 32 || config.agentToken === config.adminToken) throw new Error('本人登录密钥至少 32 字符；可选的旧 Agent 密钥也须至少 32 字符且与其不同');
+  if (!text(config.adminToken) || config.adminToken.length < 32) throw new Error('管理密钥至少 32 字符；旧登录入口已停用');
   const publicUrl = new URL(config.publicUrl);
   if (publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== '/') throw new Error('HANDOVER_PUBLIC_URL 必须是没有路径、凭据或查询参数的站点地址');
   if (publicUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('公网入口必须使用 HTTPS');
   const secure = publicUrl.protocol === 'https:';
   const store = new Store(config.dataDir);
-  const savedLogin = store.all('login-code');
-  if (config.loginCode === undefined && Object.hasOwn(savedLogin, 'code') && (typeof savedLogin.code !== 'string' || savedLogin.code.length < 8 || savedLogin.code.length > 128)) throw new Error('固定登录码文件不合法，请恢复原文件，不自动轮换');
-  if (config.loginCode !== undefined && (!text(config.loginCode, 128) || config.loginCode.length < 8)) throw new Error('HANDOVER_LOGIN_CODE 应为 8–128 个字符');
-  const loginCode = config.loginCode || savedLogin.code || crypto.randomBytes(8).toString('hex').toUpperCase();
-  if (!config.loginCode && !savedLogin.code) store.save('login-code', { code: loginCode, created: now() });
+  // Archived login codes, sessions, tickets and credentials are retained untouched.
   let vapid = store.all('vapid');
   if (config.vapidPublicKey !== undefined || config.vapidPrivateKey !== undefined) {
     if (!config.vapidPublicKey || !config.vapidPrivateKey) throw new Error('VAPID 环境变量必须同时设置公钥和私钥');
@@ -66,17 +62,8 @@ export function createHandoverServer(options = {}) {
     vapid = { publicKey: config.vapidPublicKey, privateKey: config.vapidPrivateKey };
   } else if (!vapid.publicKey || !vapid.privateKey) { vapid = webpush.generateVAPIDKeys(); store.save('vapid', vapid); }
   const changes = new EventEmitter(); changes.setMaxListeners(1000);
-  const waiters = new Map(); const listenerTimes = new Map(); const attempts = new Map();
+  const waiters = new Map(); const listenerTimes = new Map();
   const emit = (r) => changes.emit(r.id);
-  const cookieName = secure ? '__Host-handover' : 'handover';
-  const sessions = () => store.all('sessions');
-  const owner = (req) => {
-    const cookie = (req.headers.cookie || '').split(';').map((x) => x.trim()).find((x) => x.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
-    if (!cookie || cookie.length > 100) return null;
-    const key = hash(cookie), s = sessions()[key];
-    return s && s.expires > Date.now() ? { key, ...s } : null;
-  };
-  const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer /, '');
   const username = (req) => {
     const url = new URL(req.url, publicUrl), values = url.searchParams.getAll('username');
     const header = req.headers['x-handover-username'];
@@ -88,55 +75,21 @@ export function createHandoverServer(options = {}) {
     return value;
   };
   const usernameRecord = (r) => r?.accessMode === 'username' && typeof r.username === 'string';
-  const agent = (req) => !username(req) && !!config.agentToken && equal(bearer(req), config.agentToken);
+  const requireUsername = (req) => { const name = username(req); if (!name) fail(403, '请指定目标用户名；旧模式已停用'); return name; };
   const requireRequestUser = (req, r) => {
-    const name = username(req);
-    if (!r || (name ? !usernameRecord(r) || r.username !== name : usernameRecord(r))) fail(404, '请求不存在');
-    if (!name) requireOwner(req);
+    const name = requireUsername(req);
+    if (!r || !usernameRecord(r) || r.username !== name) fail(404, '请求不存在');
     return name;
   };
-  const requireOwner = (req) => { if (username(req)) fail(403, '用户名模式不提供管理权限'); const s = owner(req); if (!s) fail(401, '请先登录'); return s; };
   const scoped = (req, r) => {
-    const name = username(req);
-    if (!r || (name ? !usernameRecord(r) || r.username !== name : usernameRecord(r))) fail(404, '请求不存在');
-    if (name) {
-      if (req.headers['x-handover-source'] !== r.source.session) fail(403, '来源会话不匹配');
-      return;
-    }
-    if (!equal(hash(bearer(req)), r.tokenHash) || req.headers['x-handover-source'] !== r.source.session) fail(403, '请求凭据或来源会话不匹配');
-  };
-  const issueSession = (res) => {
-    const value = token(); const all = sessions();
-    for (const [k, s] of Object.entries(all)) if (s.expires <= Date.now()) delete all[k];
-    all[hash(value)] = { created: now(), expires: Date.now() + 90 * 86400000 };
-    store.save('sessions', all);
-    res.setHeader('Set-Cookie', `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=7776000${secure ? '; Secure' : ''}`);
-  };
-  const makeTicket = (purpose, requestId = '') => {
-    const tickets = store.all('tickets');
-    for (const [k, v] of Object.entries(tickets)) if (v.expires < Date.now()) delete tickets[k];
-    const value = token();
-    tickets[hash(value)] = { purpose, requestId, expires: Date.now() + 60000 };
-    store.save('tickets', tickets); return value;
-  };
-  const consumeTicket = (value, purpose) => {
-    if (!text(value, 200)) return null;
-    const tickets = store.all('tickets'), key = hash(value), record = tickets[key];
-    if (!record || record.purpose !== purpose || record.expires < Date.now()) return null;
-    delete tickets[key]; store.save('tickets', tickets); return record;
-  };
-  const loginRate = (req) => {
-    const ip = req.socket.remoteAddress || 'unknown';
-    const row = attempts.get(ip) || { count: 0, start: Date.now() };
-    if (Date.now() - row.start > 60000) { row.start = Date.now(); row.count = 0; }
-    attempts.set(ip, row);
-    if (++row.count > 12) fail(429, '尝试过于频繁，请一分钟后重试');
-    if (attempts.size > 10000) for (const [key, value] of attempts) if (Date.now() - value.start > 60000) attempts.delete(key);
+    requireRequestUser(req, r);
+    if (req.headers['x-handover-source'] !== r.source.session) fail(403, '来源会话不匹配');
   };
   const notify = async (request) => {
+    if (!usernameRecord(request)) return 0;
     const subscriptions = store.all('subscriptions');
-    const scopedSubscriptions = Object.entries(subscriptions).filter(([, sub]) => usernameRecord(request) ? sub.accessMode === 'username' && sub.username === request.username : sub.accessMode !== 'username');
-    const message = JSON.stringify({ ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, url: `/grill/${request.id}/${usernameRecord(request) ? '?username=' + encodeURIComponent(request.username) : ''}` });
+    const scopedSubscriptions = Object.entries(subscriptions).filter(([, sub]) => sub.accessMode === 'username' && sub.username === request.username);
+    const message = JSON.stringify({ ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, updated: request.updated, userAttentionVersion: attentionVersion(request), url: `/grill/${request.id}/${usernameRecord(request) ? '?username=' + encodeURIComponent(request.username) : ''}` });
     const results = await Promise.allSettled(scopedSubscriptions.map(async ([key, sub]) => {
       try {
         const send = config.sendNotification || webpush.sendNotification.bind(webpush);
@@ -148,7 +101,7 @@ export function createHandoverServer(options = {}) {
     }));
     return results.length;
   };
-  const notifyLater = (r) => { if (!config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
+  const notifyLater = (r) => { if (waitingFor(r) === 'user' && !config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
   const bytes = (res, status, content, type = 'application/json; charset=utf-8', extra = {}) => {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', ...extra }); res.end(content);
   };
@@ -169,7 +122,7 @@ export function createHandoverServer(options = {}) {
     html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && !handoverSessionActive()) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
-    html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); handoverSubmissionReceived(j, actions);');
+    html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); if (!j || typeof j !== \"object\" || Array.isArray(j)) j = {}; j.ok = !!(r.ok && j.ok && j.saved === true && Number.isSafeInteger(j.seq) && j.seq > 0 && handoverSessionActive()); handoverSubmissionReceived(j, actions, r.ok);');
     html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  handoverReturnWhenAcknowledged(S);');
     html = html.replace('if (S && S.finished) { b.className', 'if (S && S.cancellation) { b.className = "show done"; b.textContent = "本次回答已取消；保留已有内容，不代表同意继续或已写入设计文档。"; return; }\n  if (S && S.finished) { b.className');
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
@@ -179,7 +132,7 @@ export function createHandoverServer(options = {}) {
       html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
     }
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
-    html = html.replace('<header>', '<header><a class="home-link" href="' + (usernameRecord(r) ? '/?username=' + encodeURIComponent(r.username) : '/?mode=legacy') + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
+    html = html.replace('<header>', '<header><a class="home-link" href="' + ('/?username=' + encodeURIComponent(r.username)) + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
     html = html.replace('<button class="primary" id="send" type="button" disabled>Send to Agent</button>', '<button class="primary" id="send" type="button" disabled>发送给 Agent</button>');
     html = html.replace('<input type="checkbox" id="use-subagent" checked>', '<input type="checkbox" id="use-subagent">').replace('subagent: true', 'subagent: false');
     const labels = [
@@ -230,72 +183,48 @@ export function createHandoverServer(options = {}) {
       const allowedHosts = [publicUrl.host, new URL(actualOrigin()).host];
       if (!allowedHosts.includes(req.headers.host)) fail(403, 'Host 不匹配');
       const u = new URL(req.url, publicUrl), p = u.pathname;
-      const publicUsername = username(req);
-      if (publicUsername && ['/api/login', '/api/login/ticket'].includes(p)) fail(403, '用户名模式不提供登录权限');
+      username(req);
       if (!['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) fail(405, '不支持的方法');
       if (req.headers.origin && ![publicUrl.origin, ...(!secure ? [actualOrigin()] : [])].includes(req.headers.origin)) fail(403, '拒绝跨站请求');
       if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) fail(403, '拒绝跨站写入');
       if (req.method === 'GET' && p === '/healthz') return json(res, 200, { ok: true, service: 'handover-ui', version });
-      if (req.method === 'GET' && p === '/api/capabilities') { if (!username(req) && !agent(req)) fail(403, 'Agent 凭据无效'); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
-      if (req.method === 'POST' && p === '/api/login') {
-        loginRate(req); const data = await body(req);
-        if (!equal(data.token, loginCode) && !equal(data.token, config.adminToken) && !consumeTicket(data.token, 'pair')) fail(401, '登录码不正确');
-        issueSession(res); return json(res, 200, { ok: true });
-      }
-      if (req.method === 'POST' && p === '/api/login/ticket') {
-        loginRate(req); const data = await body(req), ticket = consumeTicket(data.ticket, 'browser');
-        if (!ticket) fail(401, '登录链接已使用或过期，请重新打开');
-        issueSession(res); return json(res, 200, { ok: true, requestId: ticket.requestId });
-      }
-      if (req.method === 'POST' && p === '/api/browser-tickets') {
-        if (!agent(req)) fail(403, 'Agent 凭据无效');
-        const data = await body(req); if (data.requestId && (!validId(data.requestId) || !store.get(data.requestId))) fail(404, '请求不存在');
-        const value = makeTicket('browser', data.requestId || '');
-        return json(res, 201, { ok: true, loginUrl: `${publicUrl.origin}/?mode=legacy#ticket=${value}` });
-      }
-      if (req.method === 'GET' && p === '/api/me' && username(req)) return json(res, 200, { mode: 'username', username: username(req), authenticated: false, vapidPublicKey:vapid.publicKey, version });
-      if (req.method === 'GET' && p === '/api/me') return json(res, 200, { authenticated: !!owner(req), vapidPublicKey: owner(req) ? vapid.publicKey : undefined, version });
-      if (req.method === 'POST' && p === '/api/logout') {
-        const session = requireOwner(req); const all = sessions(); delete all[session.key]; store.save('sessions', all);
-        const subs = store.all('subscriptions'); for (const [key, v] of Object.entries(subs)) if (v.session === session.key) delete subs[key]; store.save('subscriptions', subs);
-        res.setHeader('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`); return json(res, 200, { ok: true });
-      }
-      if (req.method === 'POST' && ['/api/login-code', '/api/pairing-tickets'].includes(p)) { requireOwner(req); return json(res, 200, { ok: true, code: loginCode, expiresIn: null, reusable: true }); }
+      if (req.method === 'GET' && p === '/api/capabilities') { requireUsername(req); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
+      if (['/api/login','/api/login/ticket','/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/logout'].includes(p)) fail(410, '旧私有模式已停用；旧记录已封存，不删除或公开');
+      if (req.method === 'GET' && p === '/api/me') return json(res, 200, { mode: 'username', username: requireUsername(req), authenticated: false, vapidPublicKey:vapid.publicKey, version });
       if (p === '/api/subscriptions' && req.method === 'POST') {
-        const name = username(req), session = name ? null : requireOwner(req), subscription = await body(req, 16384); let url;
+        const name = requireUsername(req), subscription = await body(req, 16384); let url;
         try { url = new URL(subscription.endpoint); } catch { fail(400, '无效推送地址'); }
         const host = url.hostname;
         if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || !(host === 'fcm.googleapis.com' || host === 'fcmregistrations.googleapis.com' || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.apple.com'))) fail(400, '不支持的推送服务');
         if (!text(subscription.endpoint, 4096) || !/^[A-Za-z0-9_-]{86,88}={0,2}$/.test(subscription.keys?.p256dh || '') || !/^[A-Za-z0-9_-]{22}={0,2}$/.test(subscription.keys?.auth || '')) fail(400, '无效推送密钥');
         const all = store.all('subscriptions'), key = hash(subscription.endpoint), previous = all[key];
-        if (previous && (name ? !equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth) : previous.accessMode === 'username')) fail(409, '此设备订阅证明不匹配，不能替换现有绑定；请在本设备重新授权通知');
+        if (previous && (!equal(previous.subscription?.keys?.p256dh, subscription.keys.p256dh) || !equal(previous.subscription?.keys?.auth, subscription.keys.auth))) fail(409, '此设备订阅证明不匹配，不能替换现有绑定；请在本设备重新授权通知');
         // Persist only validated Web Push fields; never echo device endpoints or keys.
         const device = {endpoint:subscription.endpoint,keys:{p256dh:subscription.keys.p256dh,auth:subscription.keys.auth}};
-        all[key] = { subscription:device, revision:crypto.randomUUID(), ...(name ? {accessMode:'username',username:name} : {session:session.key}), at: now() };
+        all[key] = { subscription:device, revision:crypto.randomUUID(), accessMode:'username',username:name, at: now() };
         store.save('subscriptions', all); return json(res, 200, { ok: true });
       }
       if (p === '/api/subscriptions' && req.method === 'DELETE') {
-        const name = username(req), session = name ? null : requireOwner(req), data = await body(req, 16384); const all = store.all('subscriptions'), key = hash(data.endpoint), existing = all[key];
+        const name = requireUsername(req), data = await body(req, 16384); const all = store.all('subscriptions'), key = hash(data.endpoint), existing = all[key];
         if (name && (!text(data.endpoint,4096) || !text(data.keys?.p256dh,128) || !text(data.keys?.auth,128))) fail(400, '解绑需要此设备完整推送订阅');
-        const allowed = name ? existing?.accessMode === 'username' && existing.username === name && equal(existing.subscription?.keys?.p256dh,data.keys.p256dh) && equal(existing.subscription?.keys?.auth,data.keys.auth) : existing?.accessMode !== 'username' && existing?.session === session.key;
+        const allowed = existing?.accessMode === 'username' && existing.username === name && equal(existing.subscription?.keys?.p256dh,data.keys.p256dh) && equal(existing.subscription?.keys?.auth,data.keys.auth);
         if (allowed) { delete all[key]; store.save('subscriptions', all); } return json(res, 200, { ok: true });
       }
-      if (p === '/api/requests' && req.method === 'GET') { const name = username(req); if (!name) requireOwner(req); return json(res, 200, { requests: store.list().filter(r => name ? usernameRecord(r) && r.username === name : !usernameRecord(r)).map(publicRequest) }); }
+      if (p === '/api/requests' && req.method === 'GET') { const name = requireUsername(req); return json(res, 200, { requests: store.list().filter(r => usernameRecord(r) && r.username === name).map(publicRequest) }); }
       if (p === '/api/requests' && req.method === 'POST') {
-        const name = username(req);
-        if (!name && !agent(req)) fail(403, 'Agent 凭据无效');
+        const name = requireUsername(req);
         const data = await body(req, 6 * 1024 * 1024);
-        if ((name ? data.username !== name || (data.accessMode !== undefined && data.accessMode !== 'username') : data.username !== undefined || data.accessMode !== undefined)) fail(400, '请求用户名或模式不一致');
-        if (!validId(data.id) || (!name && (!text(data.requestToken, 200) || data.requestToken.length < 32)) || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
+        if (data.username !== name || (data.accessMode !== undefined && data.accessMode !== 'username')) fail(400, '请求用户名或模式不一致');
+        if (!validId(data.id) || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
         const existing = store.get(data.id), creationHash = hash(JSON.stringify(data));
-        if (existing) { if (name ? !usernameRecord(existing) || existing.username !== name : usernameRecord(existing)) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${publicUrl.origin}/grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
+        if (existing) { if (!usernameRecord(existing) || existing.username !== name) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${publicUrl.origin}/grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
         const created = now();
         let state = { topic: data.topic, intent: data.context || '', project: data.source.project || '', created, doc: '', agent: { status: 'waiting', handled: 0, since: created }, questions: [], terms: [] };
         const questions = data.questions?.length ? data.questions : [{ id: 'q1', round: 1, title: data.topic, body: data.context || '', options: data.options || [], rec: {} }];
         if (!Array.isArray(questions) || questions.length > 100) fail(400, '问题数量应为 1–100');
         state = applyPatch(state, { questions }, created); validateState(state);
         const page = customPage(data.page);
-        const r = { id: data.id, kind: data.kind, source: data.source, ...(name ? {accessMode:'username', username:name} : {tokenHash: hash(data.requestToken)}), creationHash, created, updated: created, status: 'waiting', awaitingReply: false, state, events: [], ...(page ? { page } : {}) };
+        const r = { id: data.id, kind: data.kind, source: data.source, accessMode:'username', username:name, creationHash, created, updated: created, status: 'waiting', awaitingReply: false, userAttentionVersion: 1, state, events: [], ...(page ? { page } : {}) };
         store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${publicUrl.origin}/grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
       }
       const api = p.match(/^\/api\/requests\/([A-Za-z0-9_-]{8,100})(?:\/(wait|ack|visual|cancel))?$/);
@@ -318,9 +247,10 @@ export function createHandoverServer(options = {}) {
           if (r.state.finished && !next.finished) fail(409, '已完成请求不能重新激活，请创建新请求');
           const added = next.questions.some((q) => !r.state.questions.some((old) => old.id === q.id));
           const reopened = Array.isArray(patch.questions) && patch.questions.some((q) => ['open', 'reopened'].includes(q.status) && r.state.questions.some((old) => old.id === q.id));
+          if (added || reopened) r.userAttentionVersion = attentionVersion(r) + 1;
           r.awaitingReply = next.finished || added || reopened ? false : awaitingReply(r);
           r.state = next; r.updated = now(); r.status = next.finished ? 'completed' : (r.events.length > (next.agent.handled || 0) ? 'submitted' : 'waiting');
-          store.put(r); emit(r); if (added) notifyLater(r); return json(res, 200, { ok: true, ...publicRequest(r) });
+          store.put(r); emit(r); if (added || reopened) notifyLater(r); return json(res, 200, { ok: true, ...publicRequest(r) });
         }
         if (req.method === 'POST' && operation === 'ack') {
           const data = await body(req); r = store.get(api[1]); scoped(req, r);
@@ -337,7 +267,6 @@ export function createHandoverServer(options = {}) {
       }
       const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback|cancel)?$/);
       if (grill) {
-        if (!username(req) && !owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?mode=legacy&request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
         let r = store.get(grill[1]); requireRequestUser(req, r);
         if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id) : page(r), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }
@@ -375,7 +304,7 @@ export function createHandoverServer(options = {}) {
           if (r.state.finished || r.status === 'cancelled') fail(409, '请求已结束');
           actionsValid(data.actions, r.state);
           const event = { type: 'send', requestId: r.id, sourceSession: r.source.session, ...(usernameRecord(r) ? {username:r.username} : {}), seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, actions: data.actions };
-          r.events.push(event); r.awaitingReply = !data.actions.every((action) => action.type === 'reopen'); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
+          r.events.push(event); if (data.actions.every((action) => action.type === 'reopen')) r.userAttentionVersion = attentionVersion(r) + 1; r.awaitingReply = !data.actions.every((action) => action.type === 'reopen'); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }
       }

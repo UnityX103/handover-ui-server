@@ -16,9 +16,9 @@ const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_C
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 const page = await context.newPage(), errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-const request = (kind, source) => ({ id: crypto.randomUUID(), kind, topic: '隔离浏览器测试 · ' + kind, source: { session: source, project: '/isolated/browser-test', machine: 'test' }, requestToken: crypto.randomBytes(32).toString('base64url') });
+const request = (kind, source) => ({ username:'Xpy', id: crypto.randomUUID(), kind, topic: '隔离浏览器测试 · ' + kind, source: { session: source, project: '/isolated/browser-test', machine: 'test' }, requestToken: crypto.randomBytes(32).toString('base64url') });
 async function api(route, data, key = agentToken, method = 'POST', source) {
-  const response = await fetch(url + route, { method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key, ...(source ? { 'X-Handover-Source': source } : {}) }, body: data ? JSON.stringify(data) : undefined });
+  const response = await fetch(url + route, { method, headers: { 'Content-Type': 'application/json', 'X-Handover-Username':'Xpy', Authorization: 'Bearer ' + key, ...(source ? { 'X-Handover-Source': source } : {}) }, body: data ? JSON.stringify(data) : undefined });
   const result = await response.json(); assert.ok(response.ok, JSON.stringify(result)); return result;
 }
 const scoped = (r, suffix, data, method = 'POST') => api(`/api/requests/${r.id}${suffix}`, data, r.requestToken, method, r.source.session);
@@ -33,12 +33,12 @@ try {
   a.questions = [{ id: 'q1', round: 1, title: '多选问题：请选择测试选项', body: '仅为测试数据，不表示人的真实决定。', multi: true, options: [{ k: 'A', text: '测试甲' }, { k: 'B', text: '测试乙' }, { k: 'C', text: '测试丙' }], rec: { options: ['A'], why: '只用于检查推荐不会自动提交' } }];
   const b = request('feedback', 'isolated-browser-source-b');
   await api('/api/requests', a); await api('/api/requests', b);
-  await page.goto(url + '/?mode=legacy');
-  await page.locator('#login-code').fill(adminToken);
-  await page.locator('#login-form button').click();
-  await page.locator(`a.request[href="/grill/${a.id}/"]`).waitFor();
+  await page.goto(url + '/?username=Xpy');
+  await page.locator('#username').fill('Xpy');
+  await page.locator('#username-form button').click();
+  await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).waitFor();
   await fit('手机收件箱');
-  await page.locator(`a.request[href="/grill/${a.id}/"]`).click();
+  await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).click();
   await page.locator('.opt[data-opt="B"]').waitFor();
   assert.equal(await page.locator('.opt.staged').count(), 0);
   await page.locator('.opt[data-opt="B"]').click();
@@ -57,30 +57,33 @@ try {
   // Clear only the unsent text; preserve the staged multi-selection.
   await page.locator('#free').fill('');
   await page.locator('#send').click();
-  await page.waitForFunction(() => document.querySelectorAll('.opt.pending').length === 2);
+  await page.waitForURL(url + '/?username=Xpy');
   const first = await scoped(a, '/wait?timeout=0', null, 'GET');
   assert.equal(first.events.length, 1);
   assert.deepEqual(first.events[0].actions.find((x) => x.type === 'answer').options, ['B', 'C']);
-  // Saving alone does not redirect. Reloading retains the pending receipt.
-  assert.equal(new URL(page.url()).pathname, `/grill/${a.id}/`);
-  await page.reload();
-  await page.locator('.opt.pending').first().waitFor();
+  // A durable send returns to the list without consuming the Agent's event.
+  assert.equal(first.handled, 0); assert.equal(first.waitingFor, 'agent');
+  await page.reload(); await page.locator('#workspace').waitFor();
+  assert.equal((await scoped(a, '/wait?timeout=0', null, 'GET')).events.length, 1);
   await scoped(a, '', { questions: [{ id: 'q1', status: 'answered', answer: { kind: 'option', options: ['B', 'C'] } }], agent: { status: 'waiting' } }, 'PATCH');
   await scoped(a, '/ack', { seq: 1 });
-  await page.waitForURL(url + '/?mode=legacy');
-  await page.goto(`${url}/grill/${a.id}/`);
+  await page.waitForURL(url + '/?username=Xpy');
+  await page.goto(`${url}/grill/${a.id}/?username=Xpy`);
   await page.waitForFunction(() => document.querySelectorAll('.opt.chosen').length === 2);
   // Independent feedback receives no draft or pending answer from request a.
-  await page.goto(`${url}/grill/${b.id}/`);
+  await page.goto(`${url}/grill/${b.id}/?username=Xpy`);
   await page.locator('#free').waitFor();
   assert.equal(await page.locator('#free').inputValue(), '');
   await page.locator('#free').fill('隔离反馈内容');
   await page.locator('#stage-text').click();
   await page.locator('#send').click();
+  await page.waitForURL(url + '/?username=Xpy');
   const second = await scoped(b, '/wait?timeout=0', null, 'GET');
   assert.equal(second.events[0].sourceSession, b.source.session);
   assert.equal(second.events[0].actions[0].text, '隔离反馈内容');
   assert.deepEqual((await scoped(a, '/wait?timeout=0', null, 'GET')).events, []);
+  assert.equal(second.handled, 0); assert.equal(second.waitingFor, 'agent');
+  await page.goto(`${url}/grill/${b.id}/?username=Xpy`); await page.locator('#free').waitFor();
   await page.setViewportSize({ width: 820, height: 1180 });
   await fit('平板反馈');
   const geometry = await page.evaluate(() => Object.fromEntries(['header','#main','#aside','footer'].map((selector) => { const r=document.querySelector(selector).getBoundingClientRect();return [selector,{top:r.top,bottom:r.bottom}]; })));
@@ -90,51 +93,58 @@ try {
   // Same content can be submitted again after the first event was actually handled.
   await scoped(b, '', { questions: [{ id: 'q1', status: 'answered', answer: { kind: 'text', text: '隔离反馈内容' } }], agent: { status: 'waiting' } }, 'PATCH');
   await scoped(b, '/ack', { seq: 1 });
-  await page.waitForURL(url + '/?mode=legacy');
-  await page.goto(`${url}/grill/${b.id}/`); await page.locator('#free').waitFor();
+  assert.equal((await scoped(b, '/wait?timeout=0', null, 'GET')).waitingFor, 'agent');
+  await page.goto(`${url}/grill/${b.id}/?username=Xpy`); await page.locator('#free').waitFor();
   await page.locator('#free').fill('隔离反馈内容'); await page.locator('#stage-text').click(); await page.locator('#send').click();
+  await page.waitForURL(url + '/?username=Xpy');
   const repeated = await scoped(b, '/wait?timeout=0', null, 'GET');
   assert.equal(repeated.events[0].seq, 2);
   assert.notEqual(second.events[0].submissionId, repeated.events[0].submissionId);
-  // A receipt for an earlier submission must not discard new unsent text.
+  assert.equal(repeated.handled, 1); assert.equal(repeated.waitingFor, 'agent');
+  // Revisiting to write a new draft must not let a later ACK discard it.
+  await page.goto(`${url}/grill/${b.id}/?username=Xpy`); await page.locator('#free').waitFor();
   await page.locator('#free').fill('尚未发送的新补充');
-  await scoped(b, '/ack', { seq: 2 });
-  await page.waitForFunction(() => !sessionStorage.getItem('handover:return:' + location.pathname));
+  const observedAck = page.waitForResponse(async (response) => new URL(response.url()).pathname === `/grill/${b.id}/state` && response.ok() && (await response.json()).agent?.handled === 2);
+  await scoped(b, '/ack', { seq: 2 }); await observedAck;
+  // Wait through the listener fetch so the browser has applied the returned state.
+  await page.waitForResponse((response) => new URL(response.url()).pathname === `/grill/${b.id}/listener` && response.ok());
   assert.equal(new URL(page.url()).pathname, `/grill/${b.id}/`);
   assert.equal(await page.locator('#free').inputValue(), '尚未发送的新补充');
   const c = request('help', 'isolated-browser-source-c');
-  await api('/api/requests', c); await page.goto(`${url}/grill/${c.id}/`);
+  await api('/api/requests', c); await page.goto(`${url}/grill/${c.id}/?username=Xpy`);
   await page.locator('#free').fill('隔离失败提交'); await page.locator('#stage-text').click();
-  await page.route(`**/grill/${c.id}/send`, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: '隔离提交失败' }) }));
+  await page.route(`**/grill/${c.id}/send*`, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: '隔离提交失败' }) }));
   await page.locator('#send').click(); await page.getByText('发送失败：隔离提交失败').waitFor();
   assert.equal(new URL(page.url()).pathname, `/grill/${c.id}/`);
   assert.equal((await scoped(c, '/wait?timeout=0', null, 'GET')).events.length, 0);
-  await page.unroute(`**/grill/${c.id}/send`);
-  await page.goto(url + '/?mode=legacy'); await page.locator('#settings-toggle').click(); await page.locator('#pair').click();
-  await page.locator('#pairing').waitFor(); assert.match(await page.locator('#pairing').textContent(), /[0-9A-F]{16}/);
-  const loginCode=(await page.locator('#pairing').textContent()).match(/[0-9A-F]{16}/)[0];
-  await page.locator('#pair').click();assert.ok((await page.locator('#pairing').textContent()).includes(loginCode));
-  // A click dispatch does not await async logout: the device lock and worker
-  // acknowledgement must finish before a new navigation can cancel the task.
-  const logoutResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/logout' && response.request().method() === 'POST');
-  await page.locator('#logout').click();
-  assert.equal((await logoutResponse).status(), 200);
-  await page.locator('#login').waitFor({ state: 'visible' });
-  assert.equal(await page.evaluate(async () => (await (await fetch('/api/me', { cache: 'no-store' })).json()).authenticated), false, 'logout must revoke the owner cookie before testing private deep links');
-  await page.goto(`${url}/grill/${a.id}/`);
-  await page.waitForURL(url + '/?mode=legacy&request=' + a.id);
-  await page.locator('#login-code').fill(loginCode); await page.locator('#login-form button').click();
-  await page.waitForURL(`${url}/grill/${a.id}/`); await page.locator('.opt.chosen').first().waitFor();
-  await page.goto(url + '/?mode=legacy');
-  await page.evaluate((id) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { type: 'handover:navigate', url: '/grill/' + id + '/' } })), b.id);
-  await page.waitForURL(`${url}/grill/${b.id}/`); await page.locator('#free').waitFor();
-  await page.goto(url + '/?mode=legacy'); await page.locator('#workspace').waitFor();
+  await page.unroute(`**/grill/${c.id}/send*`);
+  // Retired credentials cannot create cookies or revive private login.
+  for (const route of ['/api/login','/api/login/ticket','/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/logout']) {
+    const retired = await fetch(url + route, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:adminToken})});
+    assert.equal(retired.status,410);assert.equal(retired.headers.get('set-cookie'),null);
+  }
+  // Remembered username opens matching deep links without another login form.
+  await page.goto(url + '/?username=Xpy'); await page.reload(); await page.locator('#workspace').waitFor();
+  await page.goto(`${url}/grill/${a.id}/?username=Xpy`); await page.locator('.opt.chosen').first().waitFor();
+  await page.goto(url + '/?username=Xpy');
+  await page.locator('#username-logout').click();
+  await page.locator('#username-panel').waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>localStorage.getItem('handover:username') || null),null);
+  await page.goto(`${url}/grill/${a.id}/?username=Xpy`);
+  await page.waitForURL((target)=>target.pathname==='/' && target.searchParams.get('request')===a.id && target.searchParams.get('username')==='Xpy');
+  assert.equal(await page.locator('#username').inputValue(),'');
+  await page.locator('#username').fill('Xpy'); await page.locator('#username-form button').click();
+  await page.waitForURL(`${url}/grill/${a.id}/?username=Xpy`); await page.locator('.opt.chosen').first().waitFor();
+  await page.goto(url + '/?username=Xpy');
+  await page.evaluate((id) => navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { type: 'handover:navigate', username:'Xpy', url: '/grill/' + id + '/?username=Xpy' } })), b.id);
+  await page.waitForURL(`${url}/grill/${b.id}/?username=Xpy`); await page.locator('#free').waitFor();
+  await page.goto(url + '/?username=Xpy'); await page.locator('#workspace').waitFor();
   const worker = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
   assert.equal(worker, url + '/sw.js');
   const cached = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (key) => (await (await caches.open(key)).keys()).map((req) => new URL(req.url).pathname)))).flat());
   assert.equal(cached.some((route) => route.startsWith('/api/') || route.startsWith('/grill/')), false);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, checks: ['手机及平板布局', '字号调整', '多选和本地草稿恢复', '反馈单独处理', '重复内容的独立提交', '来源隔离', '确认收到后自动返回首页', '失败或有新草稿时留在原题', '登录后直达通知目标题', '通知消息在已有窗口直达目标题', '固定登录码重复登录', 'Service Worker 不缓存私有答复', '无脚本错误'] }));
+  console.log(JSON.stringify({ ok: true, checks: ['手机及平板布局', '字号调整', '多选和本地草稿恢复', '反馈单独处理', '重复内容的独立提交', '来源隔离', '提交保存后立即返回且不消费事件', '失败或有新草稿时留在原题', '登录后直达通知目标题', '通知消息在已有窗口直达目标题', '旧凭据入口退休', '用户名持久登录及显式退出', 'Service Worker 不缓存私有答复', '无脚本错误'] }));
 } finally {
   await browser.close(); app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true });
 }

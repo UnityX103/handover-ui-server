@@ -67,9 +67,7 @@ def prepare():
             'HANDOVER_HOST': '127.0.0.1', 'HANDOVER_PORT': str(PORTS[1]),
             'HANDOVER_PUBLIC_URL': public_url.rstrip('/'),
             'HANDOVER_DATA_DIR': '/var/lib/handover-ui',
-            'HANDOVER_AGENT_TOKEN': secrets.token_urlsafe(48),
             'HANDOVER_ADMIN_TOKEN': secrets.token_urlsafe(48),
-            'HANDOVER_LOGIN_CODE': os.environ.get('HANDOVER_LOGIN_CODE') or secrets.token_hex(8).upper(),
             'HANDOVER_VAPID_SUBJECT': os.environ.get('HANDOVER_VAPID_SUBJECT') or public_url.rstrip('/'),
         }
         for key in ('HANDOVER_VAPID_PUBLIC_KEY', 'HANDOVER_VAPID_PRIVATE_KEY'):

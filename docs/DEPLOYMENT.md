@@ -9,14 +9,14 @@
 - `HANDOVER_PUBLIC_URL`：实际 HTTPS 站点入口，监听公网端口 8024。
 - `HANDOVER_HOST`、`HANDOVER_PORT`：内部应用监听地址及端口，默认回环 8025。
 - `HANDOVER_ADMIN_TOKEN`：仍必需的独立随机管理凭据（至少 32 字符）。
-- `HANDOVER_AGENT_TOKEN`：可选的旧版 Agent 随机凭据；填写时至少 32 字符且不同于管理凭据。用户名模式不需要它，部署保留现有值兼容旧请求。
-- 客户端 `HANDOVER_USERNAME=Xpy` 或配置 `username` 显式使用公开用户名模式；用户名区分大小写，仅为路由分类，不是认证。知道用户名的人可以读取和操作该用户名的新请求。旧记录不迁移、不公开；用户名模式不能取得 owner 登录票据、固定登录码或管理权限，通知仅向主动绑定同名的设备发送，不混入旧私有订阅。复用现有 VAPID 身份，不新增或轮换应用凭据。
-- `HANDOVER_LOGIN_CODE`：本人固定登录码，长期有效、不自动轮换。
+- `HANDOVER_AGENT_TOKEN`：已停用，客户端不使用该值；已有受限环境配置保留归档，不作为用户名，不删除或轮换。
+- 客户端 `HANDOVER_USERNAME=Xpy` 或配置 `username` 选择目标用户，未配置时默认 Xpy；用户名区分大小写，仅为路由分类，不是认证。知道用户名的人可以读取和操作该用户名的新请求。旧记录不迁移、不公开；用户名模式不能取得 owner 登录票据、固定登录码或管理权限，通知仅向主动绑定同名的设备发送，不混入旧私有订阅。复用现有 VAPID 身份，不新增或轮换应用凭据。
+- `HANDOVER_LOGIN_CODE`：旧登录入口已停用；现有值仅留存，不删除或轮换。
 - `HANDOVER_VAPID_PUBLIC_KEY`、`HANDOVER_VAPID_PRIVATE_KEY`、`HANDOVER_VAPID_SUBJECT`：沿用现有推送身份，公私钥必须成对设置。
 - `HANDOVER_DATA_DIR`：独立于 release 的持久数据目录。
 - 接收器由独立的受限环境文件注入 `HANDOVER_WEBHOOK_SECRET`，与 GitHub Webhook 配置保持相同。
 
-环境文件在仓库外保存，权限 0600，由 systemd 读取。更新、重启和 Skill 替换保留原值、浏览器登录和通知订阅。旧数据目录中的固定码与 VAPID 文件只用于兼容旧安装，环境变量优先；迁移时使用现有值，不重新生成。只读 Git 部署身份也在仓库外维护。
+环境文件在仓库外保存，权限 0600，由 systemd 读取。更新、重启和 Skill 替换保留原值和存储文件。旧 Cookie、登录 session、票据、登录码和无用户名请求不再授予在线访问；`/api/login*`、配对、browser-tickets、owner logout 等退休入口返回 410。旧请求保持归档，不自动绑定或公开为 Xpy，不因客户端恢复而复制。旧推送订阅仅在该设备主动授权并提供完整 endpoint/keys 证明时可改绑；不能枚举或接管其他设备。VAPID 继续沿用现有值，不重新生成。只读 Git 部署身份也在仓库外维护。
 
 ## 发布与验收
 
@@ -43,6 +43,6 @@ cat /opt/handover-ui/deployment.json
 
 ## 手机与 Skill
 
-Skill 在 `new`、`resume`、`home` 前检查仓库 `main`，按确定提交备份、更新后继续。它只更新本机 Skill，服务器仍使用 push webhook 发布。
+Skill 在 `new`、有效 schema 2 的 `resume`、`home` 前检查仓库 `main`，按确定提交备份、更新后继续。它只更新本机 Skill，服务器仍使用 push webhook 发布。
 
-手机访问同一入口并添加到主屏幕，开启通知由本人在设备上授权。通知跳转保持请求身份；提交须等来源 Agent 确认后才返回主界面。真实系统通知与安装需真机验收，不能用浏览器模拟结果代替。
+手机访问同一入口并添加到主屏幕，开启通知由本人在设备上授权。通知跳转保持请求身份；页面收到服务器保存成功回执后立即返回当前用户名列表，不等待来源 Agent ack；“已发送，等待回复”及后端处理/确认流程不变。真实系统通知与安装需真机验收，不能用浏览器模拟结果代替。

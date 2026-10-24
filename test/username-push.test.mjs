@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {createHandoverServer} from '../src/server.mjs';
+import {hash} from '../src/store.mjs';
 const adminToken='isolated-admin-'.repeat(4),agentToken='isolated-agent-'.repeat(4);
 const subscription=(name,byte=1)=>({endpoint:'https://fcm.googleapis.com/fcm/send/isolated-'+name,keys:{p256dh:Buffer.alloc(65,byte).toString('base64url'),auth:Buffer.alloc(16,byte).toString('base64url')}});
 async function fixture(t,options={}) {
@@ -16,19 +17,20 @@ async function fixture(t,options={}) {
   const headers={};if(name!==null)headers['X-Handover-Username']=name;if(data)headers['Content-Type']='application/json';if(cookie)headers.Cookie=cookie;if(origin)headers.Origin=origin;if(key)headers.Authorization='Bearer '+key;
   const res=await fetch(url+route,{method,headers,body:data?JSON.stringify(data):undefined});return{status:res.status,body:await res.json()};
  };
- const create=async(name='Xpy')=>{const data={id:crypto.randomUUID(),kind:'help',topic:'Isolated notice',source:{session:'isolated-source'},...(name?{username:name}:{requestToken:'request-'.repeat(6)})};assert.equal((await call('/api/requests',{name,data,key:name?undefined:agentToken})).status,201);return app.store.get(data.id);};
- const login=async()=>{const r=await fetch(url+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:adminToken})});return r.headers.get('set-cookie').split(';')[0];};
- return{...app,sent,call,create,login};
+ const create=async(name='Xpy')=>{if(name===null)return {id:crypto.randomUUID(),kind:'help',state:{topic:'Archived secret'}};const data={id:crypto.randomUUID(),kind:'help',topic:'Isolated notice',source:{session:'isolated-source'},...(name?{username:name}:{requestToken:'request-'.repeat(6)})};assert.equal((await call('/api/requests',{name,data,key:name?undefined:agentToken})).status,201);return app.store.get(data.id);};
+ const login=async()=> 'handover=archived-cookie';
+ const archive=(sub)=>{const all=app.store.all('subscriptions');all[hash(sub.endpoint)]={subscription:sub,session:'archived-session'};app.store.save('subscriptions',all);};
+ return{...app,sent,call,create,login,archive};
 }
 test('username opt-in binds only its devices, legacy and other usernames never receive its push',async t=>{
  const f=await fixture(t),a=subscription('x1'),b=subscription('x2',2),other=subscription('other',3),legacy=subscription('legacy',4),cookie=await f.login();
  for(const [name,sub] of [['Xpy',a],['Xpy',b],['Other',other]])assert.deepEqual(await f.call('/api/subscriptions',{name,data:sub}),{status:200,body:{ok:true}});
- assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:legacy})).status,200);
+ f.archive(legacy);assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:legacy})).status,403);
  const me=await f.call('/api/me');assert.equal(typeof me.body.vapidPublicKey,'string');assert.equal(me.body.authenticated,false);assert.equal(me.body.vapidPrivateKey,undefined);
  assert.equal((await f.call('/api/subscriptions')).status,404);
  const r=await f.create();await f.notify(r);assert.deepEqual(f.sent.map(x=>x.sub.endpoint).sort(),[a.endpoint,b.endpoint].sort());
  for(const x of f.sent){assert.equal(x.message.username,'Xpy');assert.equal(x.message.url,'/grill/'+r.id+'/?username=Xpy');}
- f.sent.length=0;await f.notify(await f.create(null));assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[legacy.endpoint]);
+ f.sent.length=0;await f.notify(await f.create(null));assert.deepEqual(f.sent,[]);
  f.sent.length=0;await f.notify(await f.create('Other'));assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[other.endpoint]);
 });
 test('device unsubscribe requires subscription proof and matching username; other devices and legacy preserved',async t=>{
@@ -46,7 +48,7 @@ test('device unsubscribe requires subscription proof and matching username; othe
 test('explicit device rebind requires both subscription keys and preserves stale-delete/origin isolation',async t=>{
  const f=await fixture(t),a=subscription('a'),cookie=await f.login();await f.call('/api/subscriptions',{data:a});
  assert.equal((await f.call('/api/subscriptions',{name:'Other',data:a})).status,200);
- assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:a})).status,409);
+ assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:a})).status,403);
  for(const field of ['auth','p256dh'])assert.equal((await f.call('/api/subscriptions',{data:{...a,keys:{...a.keys,[field]:subscription('wrong',3).keys[field]}}})).status,409);
  assert.equal((await f.call('/api/subscriptions',{data:a,origin:'https://attacker.invalid'})).status,403);
  assert.equal((await f.call('/api/subscriptions',{method:'DELETE',data:a,origin:'https://attacker.invalid'})).status,403);
@@ -55,13 +57,13 @@ test('explicit device rebind requires both subscription keys and preserves stale
 });
 test('explicit username opt-in rebinds this legacy device only and old owner logout cannot erase it',async t=>{
  const f=await fixture(t),a=subscription('rebind'),other=subscription('private-other',2),cookie=await f.login();
- for(const device of [a,other])assert.equal((await f.call('/api/subscriptions',{name:null,cookie,data:device})).status,200);
+ for(const device of [a,other])f.archive(device);
  assert.equal((await f.call('/api/subscriptions',{data:a})).status,200);
  assert.equal(Object.keys(f.store.all('subscriptions')).length,2);
  await f.notify(await f.create());assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[a.endpoint]);
- f.sent.length=0;await f.notify(await f.create(null));assert.deepEqual(f.sent.map(x=>x.sub.endpoint),[other.endpoint]);
- assert.equal((await f.call('/api/logout',{name:null,cookie,data:{}})).status,200);
- assert.equal(Object.values(f.store.all('subscriptions'))[0].username,'Xpy');assert.equal(Object.keys(f.store.all('subscriptions')).length,1);
+ f.sent.length=0;await f.notify(await f.create(null));assert.deepEqual(f.sent,[]);
+ assert.equal((await f.call('/api/logout',{name:null,cookie,data:{}})).status,410);
+ assert.equal(f.store.all('subscriptions')[hash(a.endpoint)].username,'Xpy');assert.equal(Object.keys(f.store.all('subscriptions')).length,2);
 });
 test('late expired-provider response cannot delete a replacement device binding',async t=>{
  let rejectSend,started;const ready=new Promise(r=>started=r);

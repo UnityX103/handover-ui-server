@@ -31,15 +31,15 @@ try {
  const revisited=await context.newPage();await revisited.goto(base+'/?username=Xpy');await revisited.locator('a.request').waitFor();assert.equal(await revisited.locator('#username-panel').isVisible(),false);await revisited.close();
  assert.equal(await page.locator('a.request').count(),1);assert.equal(await page.locator('#settings-toggle').isVisible(),true);await fit();
  await page.locator('a.request').click();await page.locator('#free').fill('Synthetic answer');await page.locator('#stage-text').click();await page.locator('#send').click();
- await page.waitForFunction(()=>sessionStorage.getItem('handover:return:'+location.pathname+location.search));
- const events=await api(`/api/requests/${a.id}/wait?timeout=0`);assert.equal(events.events.length,1);assert.equal(events.events[0].actions[0].text,'Synthetic answer');assert.equal(events.username,'Xpy');
+ await page.waitForURL(base+'/?username=Xpy');
+ const events=await api(`/api/requests/${a.id}/wait?timeout=0`);assert.equal(events.events.length,1);assert.equal(events.events[0].actions[0].text,'Synthetic answer');assert.equal(events.username,'Xpy');assert.equal(events.handled,0);assert.equal(events.waitingFor,'agent');
  await api(`/api/requests/${a.id}`,{questions:[{id:'q1',status:'answered',answer:{kind:'text',text:'Synthetic answer'}}]},'PATCH');
  await api(`/api/requests/${a.id}/ack`,{seq:1});await page.waitForURL(base+'/?username=Xpy');
  const custom=request({page:{version:1,feedbackType:'synthetic',documentId:'synthetic-document',html:'<!doctype html><html><body><button id="submit">Send synthetic JSON</button><script>document.querySelector("button").onclick=()=>HandoverBridge.submit({synthetic:true}).then(()=>document.body.dataset.saved="yes")</script></body></html>'}});
  await api('/api/requests',custom);await page.goto(base+`/grill/${custom.id}/?username=Xpy`);
  await page.frameLocator('#page').locator('#submit').click();
- await page.frameLocator('#page').locator('body[data-saved="yes"]').waitFor();await fit();
- const customEvents=await api(`/api/requests/${custom.id}/wait?timeout=0`);assert.deepEqual(customEvents.events[0].payload,{synthetic:true});assert.equal(customEvents.events[0].username,'Xpy');
+ await page.waitForURL(base+'/?username=Xpy');await fit();
+ const customEvents=await api(`/api/requests/${custom.id}/wait?timeout=0`);assert.deepEqual(customEvents.events[0].payload,{synthetic:true});assert.equal(customEvents.events[0].username,'Xpy');assert.equal(customEvents.handled,0);assert.equal(customEvents.waitingFor,'agent');
  await api(`/api/requests/${custom.id}/ack`,{seq:1});await page.waitForURL(base+'/?username=Xpy');
  const cancelledQuestion=request();await api('/api/requests',cancelledQuestion);
  await page.goto(base+`/grill/${cancelledQuestion.id}/?username=Xpy`);
@@ -62,5 +62,5 @@ try {
  assert.ok(!urls.some((url)=>/^\/api\/(login|browser-tickets|subscriptions|pairing-tickets)/.test(url)),JSON.stringify(urls));
  await page.reload();assert.equal(await page.locator('#username-panel').isVisible(),false);
  await page.locator('#username-logout').click();await page.waitForURL(base+'/');assert.equal(await page.locator('#username').inputValue(),'');
- assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question answer/ack scoped return, custom JSON bridge, questionnaire/custom web cancellation, retained draft, no owner routes/cookie');
+ assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question/custom saved immediate scoped return before ack, custom JSON bridge, questionnaire/custom web cancellation, retained draft, no owner routes/cookie');
 } finally {await browser.close();app.server.closeAllConnections();await new Promise((resolve)=>app.server.close(resolve));fs.rmSync(dir,{recursive:true,force:true});}

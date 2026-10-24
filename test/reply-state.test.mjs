@@ -55,3 +55,12 @@ test('legacy rows derive only known submitted state and ack persists that phase 
  assert.equal((await f.patch(id,{awaitingReply:false})).status,400);
  assert.equal((await f.call('/api/requests')).body.requests[0].waitingFor,'user');
 });
+
+test('attention version advances only for new user work, never for receipts or local unread clearing',async t=>{
+ const f=await fixture(t),id=await f.create();assert.equal((await f.state(id)).userAttentionVersion,1);
+ await f.send(id);await f.call('/api/requests/'+id+'/ack',{seq:1});await f.patch(id,{questions:[{id:'q1',status:'answered'}]});
+ assert.equal((await f.state(id)).userAttentionVersion,1);
+ assert.equal((await f.patch(id,{questions:[{id:'q2',round:2,title:'New work',rec:{}}]})).status,200);
+ assert.equal((await f.state(id)).userAttentionVersion,2);
+ await f.patch(id,{questions:[{id:'q1',status:'open'}]});assert.equal((await f.state(id)).userAttentionVersion,3);
+});

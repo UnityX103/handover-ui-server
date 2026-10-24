@@ -65,11 +65,13 @@ test('来源 Agent 撤回保留已提交事件与消费游标，完成记录不�
   assert.equal(f.store.get(done.id).status,'completed');
 });
 
-test('旧私有请求网页取消仍要求 owner 登录，不向用户名入口开放',async t=>{
-  const f=await fixture(t),r=await f.create({username:undefined,requestToken:'isolated-request-cancel-'.repeat(3)});
-  assert.equal((await f.call(`/grill/${r.id}/cancel`,{username:null,data:{}})).status,401);
-  assert.equal((await f.call(`/grill/${r.id}/cancel`,{data:{}})).status,404);
-  const login=await f.call('/api/login',{username:null,data:{token:f.adminToken}}),cookie=login.headers.get('set-cookie').split(';')[0];
-  const result=await f.call(`/grill/${r.id}/cancel`,{username:null,cookie,data:{}});
-  assert.equal(result.status,200);assert.equal(result.body.cancellation.by,'user');
+test('归档旧私有请求不可由网页或旧凭据取消，原数据保持不变',async t=>{
+  const f=await fixture(t),created=await f.create();
+  const archived=f.store.get(created.id);delete archived.username;delete archived.accessMode;f.store.put(archived);
+  assert.equal((await f.call(`/grill/${created.id}/cancel`,{username:null,data:{}})).status,403);
+  assert.equal((await f.call(`/grill/${created.id}/cancel`,{data:{}})).status,404);
+  const login=await f.call('/api/login',{username:null,data:{token:f.adminToken}});
+  assert.equal(login.status,410);assert.equal(login.headers.get('set-cookie'),null);
+  assert.equal((await f.call(`/api/requests/${created.id}/cancel`,{username:null,key:f.agentToken,data:{}})).status,403);
+  assert.deepEqual(f.store.get(created.id),archived);
 });

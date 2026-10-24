@@ -14,7 +14,7 @@ async function home(search = '', hash = '', saved = null, delayList = null, oldS
   const sandbox = {
     document: { getElementById: get, hidden: false }, navigator: { onLine: true },
     location: { search, hash, pathname: '/', replace: (url) => replaced.push(url), assign: (url) => assigned.push(url) },
-    history: { replaceState() {} }, localStorage: {getItem:(key)=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:(key)=>storage.delete(key)}, sessionStorage:{getItem:key=>oldStorage.get(key),removeItem:key=>oldStorage.delete(key)}, window: { HandoverPush:{epoch:()=> '0',transaction:async(fn)=>fn(),login:async(name,fn)=>fn(),clear:async()=>{},bind:async(name,fn)=>fn(),marker:()=>null,remember:async()=>{},restore:()=>{},active:async()=>{}}, addEventListener:(name,fn)=>{listeners[name]=fn;} }, atob, setInterval() {}, setTimeout, clearTimeout, AbortController, URLSearchParams,
+    history: { replaceState() {} }, localStorage: {getItem:(key)=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:(key)=>storage.delete(key)}, sessionStorage:{getItem:key=>oldStorage.get(key),removeItem:key=>oldStorage.delete(key)}, window: { HandoverUnread:{identity:async()=>{},sync:async()=>{},clear:async()=>{}}, HandoverPush:{epoch:()=> '0',transaction:async(fn)=>fn(),login:async(name,fn)=>fn(),clear:async()=>{},bind:async(name,fn)=>fn(),marker:()=>null,remember:async()=>{},restore:()=>{},active:async()=>{}}, addEventListener:(name,fn)=>{listeners[name]=fn;} }, atob, setInterval() {}, setTimeout, clearTimeout, AbortController, URLSearchParams,
     fetch: async (path, options) => {
       calls.push({path,options});
       if (path === '/api/requests' && delayList) await delayList;
@@ -65,8 +65,8 @@ test('deep link requires matching deliberate login and never switches active use
   const mismatch=await home('?username=Other&request=test-request','','Xpy');assert.equal(mismatch.calls.length,0);assert.match(mismatch.elements.get('message').textContent,/不会自动切换/);assert.equal(mismatch.storage.get('handover:username'),'Xpy');
   const same=await home('?username=Xpy&request=test-request','','Xpy');assert.deepEqual(same.replaced,['/grill/test-request/?username=Xpy']);
 });
-test('legacy login remains separate and username cancellation has no session side effect', async () => {
-  const h=await home('?mode=legacy');assert.deepEqual(h.calls.map(c=>c.path),['/api/me']);assert.equal(h.elements.get('login').hidden,false);assert.equal(h.elements.get('username-panel').hidden,true);
+test('obsolete legacy URL cannot consume secrets and canceled username entry has no side effect', async () => {
+  const h=await home('?mode=legacy');assert.deepEqual(h.calls,[]);assert.equal(h.elements.get('username-panel').hidden,false);
   const cancelled=await home('?username=Xpy');cancelled.elements.get('username').value='Unsubmitted';assert.ok(!cancelled.storage.get('handover:username'));assert.equal(cancelled.calls.length,0);
 });
 test('logout wins over an in-flight inbox response and pageshow rejects stale tab state', async () => {
@@ -228,22 +228,9 @@ test('other-tab device logout invalidates an unanswered permission prompt throug
  assert.equal(registrations,0);assert.ok(!h.calls.some(c=>c.path==='/api/subscriptions'));
 });
 
-test('legacy logout completes only after device lock, server revocation and worker acknowledgement', async () => {
- const h=await home('?mode=legacy');let releaseLock,releaseWorker,authenticated=true;
- const lock=new Promise(resolve=>{releaseLock=resolve;}),worker=new Promise(resolve=>{releaseWorker=resolve;});
- const phases=[];
- h.sandbox.window.HandoverPush.transaction=async work=>{await lock;phases.push('locked');return work();};
- h.sandbox.window.HandoverPush.active=async()=>{phases.push('worker-start');await worker;phases.push('worker-complete');};
- h.sandbox.navigator.serviceWorker={};
- h.sandbox.fetch=async path=>{if(path==='/api/logout'){authenticated=false;phases.push('revoked');return{ok:true,json:async()=>({ok:true})};}return{ok:true,json:async()=>({authenticated,version:'test-version'})};};
- h.elements.get('login').hidden=true;h.elements.get('workspace').hidden=false;
- const completion=h.elements.get('logout').onclick();
- assert.equal(h.elements.get('logout').disabled,true);assert.equal(authenticated,true);assert.deepEqual(phases,[]);
- releaseLock();await new Promise(setImmediate);
- assert.equal(authenticated,false);assert.equal(h.elements.get('login').hidden,true);assert.equal(h.elements.get('logout').disabled,true);
- releaseWorker();await completion;
- assert.deepEqual(phases,['locked','revoked','worker-start','worker-complete']);
- assert.equal(h.elements.get('login').hidden,false);assert.equal(h.elements.get('workspace').hidden,true);assert.equal(h.elements.get('logout').disabled,false);
+test('removed legacy forms and ticket URLs cannot call owner endpoints', async () => {
+ const h=await home('?mode=legacy','#ticket=obsolete');assert.equal(h.calls.length,0);assert.equal(h.elements.get('username-panel').hidden,false);
+ const html=fs.readFileSync(new URL('../web/index.html',import.meta.url),'utf8');assert.doesNotMatch(html,/id="(?:login-form|login-code|pair|logout|pairing)"|mode=legacy/);
 });
 
 test('remembered username survives a fresh visit and same-user deep link without login', async () => {
@@ -289,4 +276,55 @@ test('reply categories distinguish sent awaiting agent after ack from questions 
  vm.runInContext('requests='+JSON.stringify(records),h.sandbox);
  h.elements.get('status').value='sent';vm.runInContext('render()',h.sandbox);const sent=h.elements.get('requests').innerHTML;assert.match(sent,/AGENT_AFTER_ACK/);assert.match(sent,/LEGACY_SENT/);assert.doesNotMatch(sent,/USER_PENDING|FINISHED/);assert.match(sent,/已发送，等待回复/);
  h.elements.get('status').value='waiting';vm.runInContext('render()',h.sandbox);assert.match(h.elements.get('requests').innerHTML,/USER_PENDING/);assert.doesNotMatch(h.elements.get('requests').innerHTML,/AGENT_AFTER_ACK|LEGACY_SENT/);
+});
+
+test('clear unread button invokes only local metadata coordinator and never writes request state', async () => {
+ const h=await home('?username=Xpy','','Xpy'),calls=[];h.sandbox.window.HandoverUnread.clear=async(name,items)=>calls.push({name,items});const before=h.calls.length;
+ await h.elements.get('clear-unread').onclick();assert.equal(calls.length,1);assert.equal(calls[0].name,'Xpy');assert.equal(h.calls.length,before);assert.match(h.elements.get('device-state').textContent,/请求和答复未修改/);
+});
+
+test('unsupported worker local unread clear persists across refresh and future attention rebadges', async () => {
+ const storage=new Map([['handover:username','Xpy']]),badges=[];const sandbox={window:{},location:{pathname:'/'},navigator:{setAppBadge:async n=>badges.push(n),clearAppBadge:async()=>badges.push(0)},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}};
+ vm.runInNewContext(fs.readFileSync(new URL('../web/navigation.js',import.meta.url),'utf8'),sandbox);const unread=sandbox.window.HandoverUnread;
+ await unread.sync('Xpy',[{id:'request-12345678',version:1,waiting:true},{id:'request-sent123',version:1,waiting:false}]);assert.equal(badges.at(-1),1);
+ await unread.clear('Xpy',[]);assert.equal(badges.at(-1),0);await unread.sync('Xpy',[{id:'request-12345678',version:1,waiting:true}]);assert.equal(badges.at(-1),0);await unread.sync('Xpy',[{id:'request-12345678',version:2,waiting:true}]);assert.equal(badges.at(-1),1);
+});
+
+function acceptedQuestion(postImpl) {
+ const stored=new Map([['handover:username','Xpy']]),session=new Map(),timers=[],destinations=[],receipt={};
+ const sandbox={URLSearchParams,location:{pathname:'/grill/test-request/',search:'?username=Xpy',replace:url=>destinations.push(url)},navigator:{},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v)},sessionStorage:{getItem:k=>session.get(k),setItem:(k,v)=>session.set(k,v),removeItem:k=>session.delete(k)},document:{addEventListener(){},getElementById:()=>receipt},setTimeout:fn=>{timers.push(fn);},S:{agent:{handled:0}},local:{staged:{q1:{answer:{kind:'text',text:'sent'}}},drafts:{},vfeedback:[]},commit(){},...(postImpl?{post:postImpl}:{})};
+ vm.createContext(sandbox);vm.runInContext(fs.readFileSync(new URL('../web/grill-bridge.js',import.meta.url),'utf8'),sandbox);return{sandbox,stored,session,timers,destinations,receipt};
+}
+test('confirmed questionnaire save returns immediately with zero ACK, invalid/uncertain responses stay', () => {
+ const h=acceptedQuestion();h.sandbox.handoverSubmissionReceived({ok:true,saved:true,seq:1},[{type:'answer'}],true);assert.equal(h.destinations.length,0);h.timers.shift()();assert.deepEqual(h.destinations,['/?username=Xpy']);assert.equal(h.sandbox.S.agent.handled,0);
+ for(const [response,http]of [[{ok:true,saved:false,seq:1},true],[{ok:true,saved:true,seq:0},true],[{ok:true,saved:true,seq:1.5},true],[{ok:true,saved:true,seq:1},false],[{ok:false},true]]){const f=acceptedQuestion();f.sandbox.handoverSubmissionReceived(response,[{type:'answer'}],http);assert.equal(f.timers.length,0);assert.equal(f.destinations.length,0);assert.equal(f.sandbox.local.staged.q1.answer.text,'sent');}
+});
+test('questionnaire duplicate gesture sends one POST and concurrent newer draft survives upstream clear', async () => {
+ let resolve,calls=0,h;h=acceptedQuestion(async()=>{calls++;const result=await new Promise(done=>{resolve=done;});h.sandbox.handoverSubmissionReceived(result,[{type:'answer'}],true);return result;});
+ const first=h.sandbox.post([{type:'answer'}]);const duplicate=await h.sandbox.post([{type:'answer'}]);assert.equal(duplicate,null);assert.equal(calls,1);
+ h.sandbox.local.staged.q1.answer.text='newer';h.sandbox.local.drafts.q1={free:'new draft'};resolve({ok:true,saved:true,seq:1});await first;
+ h.sandbox.local.staged={};h.sandbox.local.vfeedback=[];h.timers.shift()();assert.equal(h.destinations.length,0);assert.equal(h.sandbox.local.staged.q1.answer.text,'newer');assert.equal(h.sandbox.local.drafts.q1.free,'new draft');
+});
+test('accepted questionnaire callback cannot navigate after logout or external cancellation', () => {
+ for(const cancelled of [false,true]){const h=acceptedQuestion();h.sandbox.handoverSubmissionReceived({ok:true,saved:true,seq:1},[{type:'answer'}],true);if(cancelled)h.sandbox.handoverReturnWhenAcknowledged({cancellation:{by:'agent'}});else h.stored.set('handover:identity-epoch','1');h.timers.shift()();assert.equal(h.destinations.length,0);}
+});
+
+async function customSubmitFixture() {
+ const nodes=new Map(),stored=new Map([['handover:username','Xpy']]),events={},timers=[],destinations=[],posts=[];let finish;
+ for(const selector of ['meta[name="handover-request"]','#page','#status','#retry','#cancel-request','#title','header a'])nodes.set(selector,{content:'test-request',listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},contentWindow:{postMessage(){}}});
+ const sandbox={URLSearchParams,TextEncoder,crypto:{randomUUID:()=> 'channel-test'},document:{querySelector:key=>nodes.get(key)},location:{search:'?username=Xpy',replace:url=>destinations.push(url)},localStorage:{getItem:k=>stored.get(k),setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)},window:{addEventListener:(name,fn)=>{events[name]=fn;},confirm:()=>true},setTimeout:(fn,delay)=>timers.push({fn,delay}),fetch:async(url,options)=>{if(url.includes('/feedback')){posts.push(JSON.parse(options.body));return new Promise(resolve=>{finish=resolve;});}return{ok:true,json:async()=>({topic:'synthetic',status:'waiting',handled:0,page:{feedbackType:'test',pageHash:'hash'},maxFeedbackBytes:10000})};}};
+ vm.runInNewContext(fs.readFileSync(new URL('../web/custom.js',import.meta.url),'utf8'),sandbox);await new Promise(setImmediate);
+ const event=(type,payload)=>({source:nodes.get('#page').contentWindow,origin:'null',data:{type,channel:'channel-test',messageId:'message-test',payload}});
+ return{nodes,stored,timers,destinations,posts,event,submit:payload=>events.message(event('handover:submit',payload)),dirty:()=>events.message(event('handover:dirty')),finish:(result,status=true)=>finish({ok:status,json:async()=>result})};
+}
+test('custom feedback saved response returns before ACK and double click does not POST twice', async () => {
+ const h=await customSubmitFixture();const first=h.submit({answer:'synthetic'});await h.submit({answer:'synthetic'});assert.equal(h.posts.length,1);h.finish({ok:true,saved:true,seq:1});await first;h.timers.find(t=>t.delay===0).fn();assert.deepEqual(h.destinations,['/?username=Xpy']);
+});
+test('custom uncertain save preserves pending JSON; new edits during accepted save stay', async () => {
+ for(const edited of [false,true]){const h=await customSubmitFixture();const first=h.submit({answer:'synthetic'});if(edited)await h.dirty();h.finish({ok:true,saved:edited,seq:1});await first;for(const timer of h.timers.filter(t=>t.delay===0))timer.fn();assert.equal(h.destinations.length,0);assert.ok([...h.stored.values()].some(v=>String(v).includes('synthetic')));}
+});
+
+test('exploratory POST never subtracts unsent staged answers when a draft changes', async () => {
+ let resolve;const h=acceptedQuestion(async()=>new Promise(done=>{resolve=done;}));const posting=h.sandbox.post([{type:'explore',q:'q1'}]);h.sandbox.local.drafts.q1={free:'unsent new draft'};resolve({ok:true,saved:true,seq:1});await posting;
+ h.sandbox.handoverReturnWhenAcknowledged({agent:{handled:0}});assert.equal(h.sandbox.local.staged.q1.answer.text,'sent');assert.equal(h.sandbox.local.drafts.q1.free,'unsent new draft');assert.equal(h.destinations.length,0);
 });

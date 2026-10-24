@@ -127,9 +127,9 @@ try {
       assert.equal((await scoped(receipt, '/wait?timeout=0')).events.length, 0);
       await page.unroute('**/feedback?username=Xpy'); await page.locator('#retry').click();
     }
-    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('等待来源'));
+    await page.waitForURL(base + '/?username=Xpy');
     const before = await scoped(receipt, '/wait?timeout=0');
-    assert.equal(before.events.length, 1); assert.equal(before.handled, 0);
+    assert.equal(before.events.length, 1); assert.equal(before.handled, 0); assert.equal(before.waitingFor, 'agent');
     assert.equal(before.username, 'Xpy'); assert.equal(before.events[0].username, 'Xpy');
     const collected = await run(['collect', '--receipt', receipt.receipt, '--out', path.join(receipt.resource ? resourceRoot : output, 'TestTemp/SegmentFlow/received-' + index), '--timeout', '0'], environment, receipt.resource ? resourceRoot : root);
     assert.equal(collected.ackRequired, true); assert.equal(collected.received.length, 1);
@@ -138,15 +138,21 @@ try {
     if (!receipt.resource) assert.deepEqual(returned.answers.details.custom, [1, 2]);
     assert.equal((await scoped(receipt, '/wait?timeout=0')).events.length, 1, 'collect must not acknowledge');
     if (index === 1) {
+      // A deliberate revisit can start another draft; a later Agent ACK must not discard it.
+      await page.goto(base + target.pathname + target.search);
       await frame.locator('#comment').fill('确认后应保留的合成新草稿');
       await page.waitForTimeout(100);
-      await scoped(receipt, '/ack', { seq: 1 });
-      await page.waitForFunction(() => document.querySelector('#status').textContent.includes('保留你新写入'));
+      const observedAck = page.waitForResponse(async (response) => new URL(response.url()).pathname === `/grill/${receipt.requestId}/bridge` && response.ok() && (await response.json()).handled === 1);
+      await scoped(receipt, '/ack', { seq: 1 }); await observedAck;
+      assert.equal(await frame.locator('#comment').inputValue(), '确认后应保留的合成新草稿');
       assert.equal(new URL(page.url()).pathname, `/grill/${receipt.requestId}/`);
     } else {
-      await page.reload(); await page.frameLocator('#page').locator('body').waitFor();
-      await scoped(receipt, '/ack', { seq: 1 }); await page.waitForURL(base + '/?username=Xpy');
+      await page.reload(); await page.locator('#workspace').waitFor();
+      await scoped(receipt, '/ack', { seq: 1 });
+      assert.equal(new URL(page.url()).pathname, '/');
     }
+    const afterAck = await scoped(receipt, '/wait?timeout=0');
+    assert.equal(afterAck.handled, 1); assert.equal(afterAck.waitingFor, 'agent'); assert.deepEqual(afterAck.events, []);
   }
   // Offline pages retain the same JSON export contract with no remote SDK.
   const localPage = await context.newPage();
@@ -168,7 +174,7 @@ try {
   assert.equal(Object.keys(app.store.all('sessions')).length, 0);
   assert.equal(downloads, 0, '复制 JSON 不触发文件下载');
   assert.deepEqual(errors, []);
-  console.log('PASS: 三份 Skill 用户名直达、自有页面、JSON 复制与拒绝分支（隔离替身）、无文件下载、离线回退、取消状态、隔离、重试幂等、原样回传、手动确认及新草稿保护，无 token、登录票据或 Cookie');
+  console.log('PASS: 三份 Skill 用户名直达、自有页面、JSON 复制与拒绝分支（隔离替身）、无文件下载、离线回退、取消状态、隔离、重试幂等、原样回传、保存成功立即返回、事件仍需手动确认及新草稿保护，无 token、登录票据或 Cookie');
 } finally {
   await browser.close(); app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve));
   fs.rmSync(dir, { recursive: true, force: true });

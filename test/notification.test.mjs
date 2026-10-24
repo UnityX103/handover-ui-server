@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const origin = 'https://handover.example';
-const target = origin + '/grill/request-12345678/';
-function client(id, url = origin + '/') {
+const target = origin + '/grill/request-12345678/?username=Xpy';
+function client(id, url = origin + '/?username=Xpy') {
   return { id, url, messages: [], navigations: [], focuses: 0,
     postMessage(data) { this.messages.push(data); },
     async navigate(url) { this.navigations.push(url); this.url = url; return this; },
@@ -19,6 +19,7 @@ function worker(clients = [], opened = client('opened')) {
     registration: { showNotification: async (title, options) => notifications.push({ title, options }) },
   };
   vm.runInNewContext(fs.readFileSync(new URL('../web/sw.js', import.meta.url), 'utf8'), { self, URL });
+  events.message({data:{type:'handover:push-user',username:'Xpy'},source:{},waitUntil(){}});
   const click = async (data) => {
     let done;
     events.notificationclick({ notification: { data, close() {} }, waitUntil(promise) { done = promise; } });
@@ -30,7 +31,7 @@ function worker(clients = [], opened = client('opened')) {
 test('点击通知优先打开对应问题的已有窗口', async () => {
   const home = client('home'), question = client('question', target);
   const w = worker([home, question]);
-  await w.click({ url: '/grill/request-12345678/' });
+  await w.click({ url: '/grill/request-12345678/?username=Xpy' });
   assert.deepEqual(question.navigations, [target]); assert.equal(question.focuses, 1);
   assert.equal(home.navigations.length, 0); assert.equal(w.openings.length, 0);
   assert.equal(question.messages[0].url, target);
@@ -39,7 +40,7 @@ test('点击通知优先打开对应问题的已有窗口', async () => {
 test('通知冷启动后重新握手，仍能把首页引导到目标问题', async () => {
   const opened = client('standalone-started-at-home');
   const w = worker([], opened);
-  await w.click({ requestId: 'request-12345678' });
+  await w.click({ requestId: 'request-12345678', username: 'Xpy' });
   assert.deepEqual(w.openings, [target]);
   assert.equal(opened.messages[0].url, target);
   opened.messages = [];
@@ -62,9 +63,9 @@ test('通知拒绝跨站与非问题地址，推送保存明确的目标问题�
   await w.click({ url: '/api/login-code' });
   assert.equal(w.openings.length, 0);
   let done;
-  w.events.push({ data: { json: () => ({ requestId: 'request-12345678', title: '隔离通知', body: '仅用于测试' }) }, waitUntil(promise) { done = promise; } });
+  w.events.push({ data: { json: () => ({ requestId: 'request-12345678', username: 'Xpy', title: '隔离通知', body: '仅用于测试' }) }, waitUntil(promise) { done = promise; } });
   await done;
-  assert.equal(w.notifications[0].options.data.url, '/grill/request-12345678/');
+  assert.equal(w.notifications[0].options.data.url, '/grill/request-12345678/?username=Xpy');
 });
 
 async function activeUser(w,username) { let done;w.events.message({data:{type:'handover:push-user',username},source:{},waitUntil:p=>{done=p;}});await done; }
@@ -73,7 +74,7 @@ test('username push retains scope, suppresses stale users and opens separate use
  await activeUser(w,'Xpy');let done;
  w.events.push({data:{json:()=>({requestId:'request-12345678',username:'Xpy',title:'synthetic'})},waitUntil:p=>{done=p;}});await done;
  assert.equal(w.notifications[0].options.data.url,'/grill/request-12345678/?username=Xpy');
- await w.click(w.notifications[0].options.data);assert.deepEqual(w.openings,[target+'?username=Xpy']);assert.equal(other.navigations.length,0);
+ await w.click(w.notifications[0].options.data);assert.deepEqual(w.openings,[target]);assert.equal(other.navigations.length,0);
  await activeUser(w,'Other');w.events.push({data:{json:()=>({requestId:'request-12345678',username:'Xpy'})},waitUntil:p=>{done=p;}});await done;assert.equal(w.notifications.length,1);
  await activeUser(w,null);await w.click({url:'/grill/request-12345678/?username=Xpy'});assert.equal(w.openings.length,1);
 });
@@ -84,10 +85,10 @@ test('public device binding suppresses queued legacy pushes and clicks', async (
  await w.click({url:'/grill/request-12345678/'});assert.equal(w.notifications.length,0);assert.equal(w.openings.length,0);
 });
 
-test('explicit logout suppresses legacy queue until explicit legacy opt-in', async () => {
+test('removed legacy marker never enables no-username pushes', async () => {
  const w=worker();await activeUser(w,null);let done;
  w.events.push({data:{json:()=>({requestId:'request-12345678'})},waitUntil:p=>{done=p;}});await done;assert.equal(w.notifications.length,0);
- await activeUser(w,'@legacy');w.events.push({data:{json:()=>({requestId:'request-12345678'})},waitUntil:p=>{done=p;}});await done;assert.equal(w.notifications.length,1);
+ await activeUser(w,'@legacy');w.events.push({data:{json:()=>({requestId:'request-12345678'})},waitUntil:p=>{done=p;}});await done;assert.equal(w.notifications.length,0);
 });
 
 test('binding changes close already displayed notifications from old usernames', async () => {
@@ -106,4 +107,47 @@ test('logout acknowledgement waits for delayed display then closes that old noti
  let pushed;events.push({data:{json:()=>({requestId:'request-12345678',username:'Xpy',title:'old topic'})},waitUntil:p=>{pushed=p;}});await new Promise(setImmediate);
  let logout;events.message({data:{type:'handover:push-user',username:null},source:{},ports:[{postMessage:()=>{ack=true;}}],waitUntil:p=>{logout=p;}});await new Promise(setImmediate);assert.equal(ack,false);
  display();await pushed;await logout;assert.equal(ack,true);assert.deepEqual(closed,['old topic']);
+});
+
+function unreadWorker() {
+ const events={},shown=[],badges=[],network=[];
+ const self={location:{origin},navigator:{setAppBadge:async n=>badges.push(n),clearAppBadge:async()=>badges.push(0)},addEventListener:(name,fn)=>{events[name]=fn;},registration:{showNotification:async(title,options)=>shown.push({title,data:options.data,closed:false,close(){this.closed=true;}}),getNotifications:async()=>shown.filter(n=>!n.closed)}};
+ vm.runInNewContext(fs.readFileSync(new URL('../web/sw.js',import.meta.url),'utf8'),{self,URL,fetch:()=>{network.push('unexpected');throw new Error('No business mutations');}});
+ const message=async data=>{let pending,result;events.message({source:{},data,ports:[{postMessage:value=>{result=value;}}],waitUntil:p=>{pending=p;}});await pending;return result;};
+ const unread=(action,username='Xpy',extra={})=>message({type:'handover:unread',action,username,epoch:1,...extra});
+ const push=async(id,version=1,username='Xpy')=>{let pending;events.push({data:{json:()=>({requestId:id,username,userAttentionVersion:version,title:'synthetic'})},waitUntil:p=>{pending=p;}});await pending;};
+ return{shown,badges,network,message,unread,push};
+}
+
+test('clear unread is current-user local metadata and repeated refresh cannot recreate old badge', async () => {
+ const w=unreadWorker();await w.message({type:'handover:push-user',username:'Xpy'});
+ await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:1,waiting:true},{id:'request-sent123',version:1,waiting:false}]});assert.equal(w.badges.at(-1),1);
+ await w.push('request-12345678');w.shown.push({data:{url:'/grill/other-12345678/?username=Other',userAttentionVersion:1},closed:false,close(){this.closed=true;}});
+ const snapshot=await w.unread('snapshot');await w.unread('clear','Xpy',{items:[{id:'request-12345678',version:1,waiting:true}],known:snapshot.known});assert.equal(w.badges.at(-1),0);assert.equal(w.shown[0].closed,true);assert.equal(w.shown[1].closed,false);
+ await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:1,waiting:true}]});assert.equal(w.badges.at(-1),0);assert.deepEqual(w.network,[]);
+});
+
+test('newer future push racing clear survives and old delayed version cannot resurrect badge', async () => {
+ const w=unreadWorker();await w.message({type:'handover:push-user',username:'Xpy'});await w.unread('identity');await w.push('request-12345678',1);
+ const snapshot=await w.unread('snapshot');await w.push('request-12345678',2);await w.unread('clear','Xpy',{items:[{id:'request-12345678',version:1,waiting:true}],known:snapshot.known});assert.equal(w.badges.at(-1),1);assert.equal(w.shown.at(-1).closed,false);
+ const next=await w.unread('snapshot');await w.unread('clear','Xpy',{items:[],known:next.known});assert.equal(w.badges.at(-1),0);const before=w.shown.length;await w.push('request-12345678',1);assert.equal(w.shown.length,before);await w.push('request-12345678',3);assert.equal(w.badges.at(-1),1);
+});
+
+test('sent/closed and empty pending list clear badge; fallback watermarks merge on worker return', async () => {
+ const w=unreadWorker();await w.message({type:'handover:push-user',username:'Xpy'});await w.unread('identity');await w.push('request-12345678',1);
+ await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:1,waiting:false}]});assert.equal(w.badges.at(-1),0);
+ await w.unread('sync','Xpy',{items:[{id:'request-second123',version:1,waiting:true}]});assert.equal(w.badges.at(-1),1);await w.unread('sync','Xpy',{items:[]});assert.equal(w.badges.at(-1),0);
+ await w.unread('sync','Xpy',{items:[{id:'request-second123',version:1,waiting:true}],localSeen:{'request-second123':1}});assert.equal(w.badges.at(-1),0);
+});
+
+test('clear includes worker-known unread items even when current page snapshot is empty', async () => {
+ const w=unreadWorker();await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:4,waiting:true}]});assert.equal(w.badges.at(-1),1);
+ const snapshot=await w.unread('snapshot');await w.unread('clear','Xpy',{items:[],known:snapshot.known});assert.equal(w.badges.at(-1),0);
+ await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:4,waiting:true}]});assert.equal(w.badges.at(-1),0);assert.deepEqual(w.network,[]);
+});
+
+test('identity-only worker restore merges offline clear watermark before displaying badge', async () => {
+ const w=unreadWorker();await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:2,waiting:true}]});assert.equal(w.badges.at(-1),1);
+ await w.unread('identity','Xpy',{localSeen:{'request-12345678':2}});assert.equal(w.badges.at(-1),0);
+ await w.unread('identity');assert.equal(w.badges.at(-1),0);
 });

@@ -15,15 +15,15 @@ description: 通过配置的远程交接服务发起 Grill 问卷，自动用默
 {"serverUrl":"<HANDOVER_SERVER_URL>","username":"Xpy"}
 ```
 
-本地变量 `HANDOVER_SERVER_URL` 优先于 `serverUrl`；`HANDOVER_USERNAME` 优先于配置 `username`。无用户名且无旧 Agent token 时默认 Xpy，无需 `HANDOVER_AGENT_TOKEN`；可用 `config --username Xpy` 显式切换。用户名区分大小写，接受 1–64 个英文字母、数字、下划线或短横线。旧 Agent token 配置仍用于旧模式，不输出或删除旧凭据。运行 `node "$SKILL/scripts/handover.mjs" config --show` 可查看服务器和配置状态，不会输出凭据。
+本地变量 `HANDOVER_SERVER_URL` 优先于 `serverUrl`；`HANDOVER_USERNAME` 优先于配置 `username`。未配置用户名时始终默认 Xpy，无需 `HANDOVER_AGENT_TOKEN`；可用 `config --username Xpy` 显式切换。用户名区分大小写，接受 1–64 个英文字母、数字、下划线或短横线。旧 Agent token 配置被忽略，`config --token-stdin` 已停用，不输出或删除旧凭据。运行 `node "$SKILL/scripts/handover.mjs" config --show` 可查看服务器和配置状态，不会输出凭据。
 
-**安全边界：用户名仅作公开分类，不是认证；知道用户名的人可以读取和操作该用户名的新请求，不能据此证明答复者身份。不要提交秘密，不把未经核验的敏感操作答复自动升级为授权。** 旧无用户名记录保持私有，不自动认领到 Xpy。用户名模式打开普通带 `?username=` 的页面，不签发 owner 登录票据；登录码、旧私有订阅与管理员接口仍受原保护；用户名通知仅在设备本人主动授权绑定后投递同名请求，退出先解绑本设备。新 handle 固定 username；恢复时不要根据当前配置更改归属，旧 handle 继续原协议。
+**安全边界：用户名仅作公开分类，不是认证；知道用户名的人可以读取和操作该用户名的新请求，不能据此证明答复者身份。不要提交秘密，不把未经核验的敏感操作答复自动升级为授权。** 旧无用户名记录与 schema 1 handle 仅保留归档，网页/API 不可访问，不自动认领到 Xpy。用户名模式打开普通带 `?username=` 的页面，不签发 owner 登录票据；旧登录码、登录/配对/票据和 owner 退出入口已停用，旧 Cookie/token 不能访问归档数据；管理员、Webhook 与 VAPID 私钥保护不变；用户名通知仅在设备本人主动授权绑定后投递同名请求，退出先解绑本设备。新 handle 固定 username；恢复时不要根据当前配置更改归属，旧 schema 1 handle 在联网/更新前明确报归档停用，不迁移、不重复创建。
 
 浏览器尚未记住用户名或主动退出后，需要本人主动填写目标用户名，连接成功后自动回到链接指定的问题，不输入密码、不再从收件箱选题。已记住同名用户时直达回答；URL 中的用户名只标记目标，不覆盖或切换已有用户名；不同用户名须先退出再选择。
 
 ## 使用前检查更新
 
-客户端在每次 `new`、`resume` 或 `home` 前先请求 GitHub，比较仓库 `UnityX103/handover-ui-server` 的 `main` 完整 SHA 与本地安装版本。存在新版本时，下载该确定提交的清单和文件，备份并更新两份远程 Skill 及已有的 `grill-with-docs-ui` 组合入口，再用新版客户端继续同一次操作。依赖本机已登录的 `gh`，凭据不经过命令参数；服务器仍通过已有 push webhook 更新。
+客户端在每次 `new`、有效 schema 2 的 `resume` 或 `home` 前先请求 GitHub，比较仓库 `UnityX103/handover-ui-server` 的 `main` 完整 SHA 与本地安装版本。存在新版本时，下载该确定提交的清单和文件，备份并更新两份远程 Skill 及已有的 `grill-with-docs-ui` 组合入口，再用新版客户端继续同一次操作。依赖本机已登录的 `gh`，凭据不经过命令参数；服务器仍通过已有 push webhook 更新。
 
 更新结果写入 stderr 的 `skill_update` JSON。看到 `updated:true` 时重新读取已安装的 Skill，以新版说明继续；已经创建的请求沿用返回的 handle，不重复 `new`。网络或权限失败时说明未能完成更新，保留现有客户端、配置和请求继续；不得宣称已是最新版。单次交接的 `wait`、`patch`、`ack` 不反复检查或中途替换客户端。
 
@@ -56,7 +56,7 @@ node "$SKILL/scripts/handover.mjs" wait --handle /absolute/path/handle.json --ti
 
 - 检查 JSON、退出码和身份。退出码 3 仅表示本段尚无答复，保持原请求并继续下一段；适时报告仍在等哪些答案，不重开网页或另建请求。网络失败时保留 handle，重连后 `resume` 再 `wait`。取消或客户端工具无法继续运行时说明恢复位置，不能假装继续监听。
 - 返回事件包含匹配的 `requestId`、`sourceSession`、`seq` 和 `actions`，用户名模式还核对 `username`。它们是页面提交的输入，不是默认选项或超时推断；用户名模式不证明提交者身份；只处理尚未确认的序号。`answer` 可为 option、text 或 accept，accept 只采纳该题明确的推荐；`thread` 是讨论，不能当作答案。`defer`、`reopen`、`explore`、`finish` 按真实含义处理，不把跳过或结束访谈当作同意实施。
-- `wait` **不自动消费**事件。先用 `patch` 把已收到的答案、讨论和状态写回，真实回答的题同时设 `status:"answered"`；再用 `ack --seq N` 确认已经处理的最高连续序号。网页等到该序号被确认后自动返回主界面；仅保存、超时或断线不能代替确认。中断后先读 `state` 与 `pending`，避免重复落实已经记录的决定。不能直接跳过未处理序号。
+- `wait` **不自动消费**事件。先用 `patch` 把已收到的答案、讨论和状态写回，真实回答的题同时设 `status:"answered"`；再用 `ack --seq N` 确认已经处理的最高连续序号。网页收到服务器保存成功回执后立即返回当前用户名列表，不等待该序号被 ack；列表保持“已发送，等待回复”。页面返回、仅保存、超时或断线都不能代替 Agent 处理和确认。中断后先读 `state` 与 `pending`，避免重复落实已经记录的决定。不能直接跳过未处理序号。
 - 完成一轮需要继续访谈时，在同一请求内 `patch` 新的问题并设置 `agent.status:"waiting"`，继续等待；只有真正结束时才 `finish`。新一轮题目不复用已答题 ID。
 
 ```sh
