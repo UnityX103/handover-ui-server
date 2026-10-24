@@ -54,7 +54,7 @@
 
 ## Skill 配置与更新
 
-- 两份 Skill 共用 `~/.config/handover-ui/config.json`，权限为 0600。`HANDOVER_CONFIG` 可指定配置文件；`HANDOVER_SERVER_URL`、`HANDOVER_AGENT_TOKEN` 分别覆盖目标服务器和 Agent 凭据。
+- 两份 Skill 共用 `~/.config/handover-ui/config.json`，权限为 0600。`HANDOVER_CONFIG` 可指定配置文件；`HANDOVER_SERVER_URL`、`HANDOVER_USERNAME` 分别覆盖目标服务器和目标用户名；无旧凭据时用户名默认 Xpy。`HANDOVER_AGENT_TOKEN` 仅兼容旧模式。用户名是公开命名空间，不是认证；任何知道用户名的人可操作其新请求。不得将用户名模式接入 owner 登录票据、登录码、管理员或 Webhook 权限，不自动公开旧无用户名数据。
 - 客户端在 `new`、`resume`、`home` 前通过本机已登录的 `gh` 检查仓库 `UnityX103/handover-ui-server` 的 `main` 完整 SHA；有更新则从同一个确定提交下载清单和文件，备份、安装，再以新版客户端继续原操作。
 - 保留清单路径校验、并发锁、完整下载后安装及失败恢复。更新失败时报告并继续使用现有版本，不宣称已更新，不重建已有请求。`wait`、`patch`、`ack` 不在同一交接中反复检查更新。
 - 源码修改落在仓库内的 Skill、客户端与安装模板，不只修改用户安装副本。需要安装时运行 `npm run install:skills`；更新结果为 `updated:true` 时重读已安装说明。
@@ -63,7 +63,7 @@
 ## 数据与凭据
 
 - 业务数据、实际登录码、Agent/Admin token、Webhook secret、部署私钥和 Web Push VAPID 私钥不进入源码、Skill、Git、命令参数或日志。通过受限文件或标准输入传递秘密值。
-- 客户端 handle 默认在 `~/.local/state/handover-ui/requests/`，权限为 0600，其中包含每请求凭据，不输出完整文件内容。临时数据和测试证据放在忽略目录或隔离临时目录。
+- 客户端 handle 默认在 `~/.local/state/handover-ui/requests/`，权限为 0600，旧 schema 1 包含每请求凭据，新 schema 2 保存固定用户名；不输出完整文件内容。临时数据和测试证据放在忽略目录或隔离临时目录。
 - 固定登录码长期有效、可重复使用，不自动轮换；服务重启、发布和 Skill 更新均保留它。仅在本人明确要求更换时修改，维持受限权限及既有登录会话。
 - 服务数据独立于 release 保存；登录码、Agent/Admin 与 VAPID 凭据由服务器环境变量提供，保留已有值，不因发布轮换。修改持久化时保持原子写入与故障恢复，兼顾并发请求；代码回滚不等于数据回滚，不自行引入破坏性迁移。
 

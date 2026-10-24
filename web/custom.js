@@ -3,12 +3,15 @@
   const id = document.querySelector('meta[name="handover-request"]').content;
   const frame = document.querySelector('#page'), status = document.querySelector('#status');
   const retry = document.querySelector('#retry');
-  const route = `/grill/${id}/`, channel = crypto.randomUUID(), storageKey = `handover:custom:${id}`;
+  const username = new URLSearchParams(location.search).get('username');
+  const query = username === null ? '' : '?' + new URLSearchParams({username});
+  const home = '/' + query; document.querySelector('header a').href = home;
+  const route = `/grill/${id}/`, channel = crypto.randomUUID(), storageKey = `handover:custom:${id}${query}`;
   let revision = 0, pending, handled = 0, closed = false, submitting = false;
   try { pending = JSON.parse(localStorage.getItem(storageKey)); revision = pending?.currentRevision || 0; } catch {}
   const persist = () => { try { if (pending) localStorage.setItem(storageKey, JSON.stringify({ ...pending, currentRevision: revision })); else localStorage.removeItem(storageKey); } catch {} };
   const api = async (path, body) => {
-    const response = await fetch(route + path, { cache: 'no-store', ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+    const response = await fetch(route + path + query, { cache: 'no-store', ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
     const data = await response.json(); if (!response.ok) throw new Error(data.error || '请求失败'); return data;
   };
   const info = await api('bridge');
@@ -42,14 +45,14 @@
     } catch (error) { status.textContent = error.message; result({ ok: false, error: error.message }); }
     finally { submitting = false; }
   });
-  frame.src = route + 'content'; status.textContent = pending ? '恢复提交状态，等待来源确认' : '请在下方页面填写';
+  frame.src = route + 'content' + query; status.textContent = pending ? '恢复提交状态，等待来源确认' : '请在下方页面填写';
   const poll = async () => {
     try {
       const current = await api('bridge'); handled = current.handled;
       if (pending?.seq && handled >= pending.seq) {
         const edited = revision > pending.revision;
         pending = undefined; persist();
-        if (!edited) { closed = true; location.replace('/'); return; }
+        if (!edited) { closed = true; location.replace(home); return; }
         status.textContent = '来源 Agent 已收到；保留你新写入的内容';
       }
       if (current.status === 'cancelled') status.textContent = '此请求已取消，可导出当前内容';

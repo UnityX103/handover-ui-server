@@ -1,6 +1,9 @@
+const handoverUsername = new URLSearchParams(location.search).get('username');
+const handoverScope = location.pathname + (handoverUsername === null ? '' : '?' + new URLSearchParams({username:handoverUsername}));
+const handoverHome = handoverUsername === null ? '/' : '/?' + new URLSearchParams({username:handoverUsername});
 // Included inside the upstream page's script; each send keeps its identity on retry.
 function handoverSubmissionId(actions) {
-  const key = 'handover:submission:' + location.pathname;
+  const key = 'handover:submission:' + handoverScope;
   const digest = JSON.stringify(actions);
   let saved;
   try { saved = JSON.parse(localStorage.getItem(key)); } catch {}
@@ -12,32 +15,33 @@ function handoverSubmissionId(actions) {
 }
 function handoverSubmissionReceived(result, actions) {
   if (!result?.ok || !result.seq) return;
-  const key = 'handover:submission:' + location.pathname;
+  const key = 'handover:submission:' + handoverScope;
   try {
     const saved = JSON.parse(localStorage.getItem(key));
     if (saved) { saved.seq = result.seq; localStorage.setItem(key, JSON.stringify(saved)); }
   } catch {}
   if (actions.some((action) => !['visualize', 'explore'].includes(action.type))) {
-    sessionStorage.setItem('handover:return:' + location.pathname, String(result.seq));
+    sessionStorage.setItem('handover:return:' + handoverScope, String(result.seq));
     const receipt = document.getElementById('handover-receipt');
     if (receipt) { receipt.hidden = false; receipt.textContent = '答复已保存，等待来源 Agent 确认；收到后自动返回主界面。'; }
     setTimeout(() => handoverReturnWhenAcknowledged(S), 0);
   }
 }
 function handoverReturnWhenAcknowledged(state) {
-  const key = 'handover:return:' + location.pathname;
+  const key = 'handover:return:' + handoverScope;
   const seq = Number(sessionStorage.getItem(key));
   if (!seq || (state?.agent?.handled || 0) < seq) return;
   sessionStorage.removeItem(key);
   // Never leave newly typed or staged work behind when an earlier send is acknowledged.
   if (stagedCount() || typedAnswers().length) return;
-  location.replace('/');
+  location.replace(handoverHome);
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 document.addEventListener('DOMContentLoaded', () => {
+  const home = document.querySelector('.home-link'); if (home) home.href = handoverHome;
   const receipt = document.createElement('span'); receipt.id = 'handover-receipt'; receipt.hidden = true; receipt.setAttribute('role', 'status');
   document.querySelector('header').append(receipt);
-  if (sessionStorage.getItem('handover:return:' + location.pathname)) {
+  if (sessionStorage.getItem('handover:return:' + handoverScope)) {
     receipt.hidden = false; receipt.textContent = '答复已保存，等待来源 Agent 确认；收到后自动返回主界面。';
   }
   let size = Math.min(28, Math.max(18, Number(localStorage.getItem('handover:font')) || 20));

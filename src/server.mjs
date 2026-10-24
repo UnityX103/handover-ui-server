@@ -14,7 +14,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kinds = ['questionnaire', 'feedback', 'help'];
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const text = (v, max = 4000) => typeof v === 'string' && v.length <= max;
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, created: r.created, updated: r.updated, status: r.status, lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
+const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
 
 function actionsValid(actions, state) {
   if (!Array.isArray(actions) || !actions.length || actions.length > 100) fail(400, 'actions 应为 1–100 个操作');
@@ -45,7 +45,7 @@ export function createHandoverServer(options = {}) {
     vapidPublicKey: process.env.HANDOVER_VAPID_PUBLIC_KEY, vapidPrivateKey: process.env.HANDOVER_VAPID_PRIVATE_KEY,
     vapidSubject: process.env.HANDOVER_VAPID_SUBJECT, ...options,
   };
-  if (!text(config.agentToken) || config.agentToken.length < 32 || !text(config.adminToken) || config.adminToken.length < 32 || config.agentToken === config.adminToken) throw new Error('请配置两个不同、至少 32 字符的 Agent 与本人登录密钥');
+  if ((config.agentToken !== undefined && config.agentToken !== '' && (!text(config.agentToken) || config.agentToken.length < 32)) || !text(config.adminToken) || config.adminToken.length < 32 || config.agentToken === config.adminToken) throw new Error('本人登录密钥至少 32 字符；可选的旧 Agent 密钥也须至少 32 字符且与其不同');
   const publicUrl = new URL(config.publicUrl);
   if (publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== '/') throw new Error('HANDOVER_PUBLIC_URL 必须是没有路径、凭据或查询参数的站点地址');
   if (publicUrl.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname)) throw new Error('公网入口必须使用 HTTPS');
@@ -74,10 +74,32 @@ export function createHandoverServer(options = {}) {
     return s && s.expires > Date.now() ? { key, ...s } : null;
   };
   const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer /, '');
-  const agent = (req) => equal(bearer(req), config.agentToken);
-  const requireOwner = (req) => { const s = owner(req); if (!s) fail(401, '请先登录'); return s; };
+  const username = (req) => {
+    const url = new URL(req.url, publicUrl), values = url.searchParams.getAll('username');
+    const header = req.headers['x-handover-username'];
+    if (values.length > 1) fail(400, '用户名不能重复');
+    const value = header !== undefined ? header : values[0];
+    if (value === undefined) return null;
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(value)) fail(400, '用户名应为 1–64 个英文字母、数字、下划线或连字符');
+    if (header !== undefined && values.length && header !== values[0]) fail(400, '用户名不一致');
+    return value;
+  };
+  const usernameRecord = (r) => r?.accessMode === 'username' && typeof r.username === 'string';
+  const agent = (req) => !username(req) && !!config.agentToken && equal(bearer(req), config.agentToken);
+  const requireRequestUser = (req, r) => {
+    const name = username(req);
+    if (!r || (name ? !usernameRecord(r) || r.username !== name : usernameRecord(r))) fail(404, '请求不存在');
+    if (!name) requireOwner(req);
+    return name;
+  };
+  const requireOwner = (req) => { if (username(req)) fail(403, '用户名模式不提供管理权限'); const s = owner(req); if (!s) fail(401, '请先登录'); return s; };
   const scoped = (req, r) => {
-    if (!r) fail(404, '请求不存在');
+    const name = username(req);
+    if (!r || (name ? !usernameRecord(r) || r.username !== name : usernameRecord(r))) fail(404, '请求不存在');
+    if (name) {
+      if (req.headers['x-handover-source'] !== r.source.session) fail(403, '来源会话不匹配');
+      return;
+    }
     if (!equal(hash(bearer(req)), r.tokenHash) || req.headers['x-handover-source'] !== r.source.session) fail(403, '请求凭据或来源会话不匹配');
   };
   const issueSession = (res) => {
@@ -122,7 +144,7 @@ export function createHandoverServer(options = {}) {
     }));
     return results.length;
   };
-  const notifyLater = (r) => { if (!config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
+  const notifyLater = (r) => { if (!usernameRecord(r) && !config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
   const bytes = (res, status, content, type = 'application/json; charset=utf-8', extra = {}) => {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', ...extra }); res.end(content);
   };
@@ -140,15 +162,15 @@ export function createHandoverServer(options = {}) {
   const page = (r) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');
-    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; return`)
+    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); handoverSubmissionReceived(j, actions);');
     html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  handoverReturnWhenAcknowledged(S);');
-    html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + location.pathname;');
+    html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
-    html = html.replace('<header>', '<header><a class="home-link" href="/">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
+    html = html.replace('<header>', '<header><a class="home-link" href="' + (usernameRecord(r) ? '/?username=' + encodeURIComponent(r.username) : '/') + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
     html = html.replace('<button class="primary" id="send" type="button" disabled>Send to Agent</button>', '<button class="primary" id="send" type="button" disabled>发送给 Agent</button>');
     html = html.replace('<input type="checkbox" id="use-subagent" checked>', '<input type="checkbox" id="use-subagent">').replace('subagent: true', 'subagent: false');
     const labels = [
@@ -175,7 +197,7 @@ export function createHandoverServer(options = {}) {
     const refresh = () => listenerTimes.set(r.id, Date.now()); refresh();
     const reply = () => {
       const current = store.get(r.id);
-      return { ok: true, requestId: r.id, source: r.source, status: current.status, events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
+      return { ok: true, requestId: r.id, source: r.source, ...(usernameRecord(r) ? {username:r.username,accessMode:'username'} : {}), status: current.status, events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
     };
     let result = reply();
     if (result.events.length || ['completed', 'cancelled'].includes(result.status) || !timeout) return json(res, 200, result);
@@ -193,11 +215,13 @@ export function createHandoverServer(options = {}) {
       const allowedHosts = [publicUrl.host, new URL(actualOrigin()).host];
       if (!allowedHosts.includes(req.headers.host)) fail(403, 'Host 不匹配');
       const u = new URL(req.url, publicUrl), p = u.pathname;
+      const publicUsername = username(req);
+      if (publicUsername && ['/api/login', '/api/login/ticket'].includes(p)) fail(403, '用户名模式不提供登录权限');
       if (!['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) fail(405, '不支持的方法');
       if (req.headers.origin && ![publicUrl.origin, ...(!secure ? [actualOrigin()] : [])].includes(req.headers.origin)) fail(403, '拒绝跨站请求');
       if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) fail(403, '拒绝跨站写入');
       if (req.method === 'GET' && p === '/healthz') return json(res, 200, { ok: true, service: 'handover-ui', version });
-      if (req.method === 'GET' && p === '/api/capabilities') { if (!agent(req)) fail(403, 'Agent 凭据无效'); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
+      if (req.method === 'GET' && p === '/api/capabilities') { if (!username(req) && !agent(req)) fail(403, 'Agent 凭据无效'); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
       if (req.method === 'POST' && p === '/api/login') {
         loginRate(req); const data = await body(req);
         if (!equal(data.token, loginCode) && !equal(data.token, config.adminToken) && !consumeTicket(data.token, 'pair')) fail(401, '登录码不正确');
@@ -214,6 +238,7 @@ export function createHandoverServer(options = {}) {
         const value = makeTicket('browser', data.requestId || '');
         return json(res, 201, { ok: true, loginUrl: `${publicUrl.origin}/#ticket=${value}` });
       }
+      if (req.method === 'GET' && p === '/api/me' && username(req)) return json(res, 200, { mode: 'username', username: username(req), authenticated: false, version });
       if (req.method === 'GET' && p === '/api/me') return json(res, 200, { authenticated: !!owner(req), vapidPublicKey: owner(req) ? vapid.publicKey : undefined, version });
       if (req.method === 'POST' && p === '/api/logout') {
         const session = requireOwner(req); const all = sessions(); delete all[session.key]; store.save('sessions', all);
@@ -233,21 +258,23 @@ export function createHandoverServer(options = {}) {
         const session = requireOwner(req), data = await body(req); const all = store.all('subscriptions'), key = hash(data.endpoint);
         if (all[key]?.session === session.key) { delete all[key]; store.save('subscriptions', all); } return json(res, 200, { ok: true });
       }
-      if (p === '/api/requests' && req.method === 'GET') { requireOwner(req); return json(res, 200, { requests: store.list().map(publicRequest) }); }
+      if (p === '/api/requests' && req.method === 'GET') { const name = username(req); if (!name) requireOwner(req); return json(res, 200, { requests: store.list().filter(r => name ? usernameRecord(r) && r.username === name : !usernameRecord(r)).map(publicRequest) }); }
       if (p === '/api/requests' && req.method === 'POST') {
-        if (!agent(req)) fail(403, 'Agent 凭据无效');
+        const name = username(req);
+        if (!name && !agent(req)) fail(403, 'Agent 凭据无效');
         const data = await body(req, 6 * 1024 * 1024);
-        if (!validId(data.id) || !text(data.requestToken, 200) || data.requestToken.length < 32 || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
+        if ((name ? data.username !== name || (data.accessMode !== undefined && data.accessMode !== 'username') : data.username !== undefined || data.accessMode !== undefined)) fail(400, '请求用户名或模式不一致');
+        if (!validId(data.id) || (!name && (!text(data.requestToken, 200) || data.requestToken.length < 32)) || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
         const existing = store.get(data.id), creationHash = hash(JSON.stringify(data));
-        if (existing) { if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${publicUrl.origin}/grill/${data.id}/` }); }
+        if (existing) { if (name ? !usernameRecord(existing) || existing.username !== name : usernameRecord(existing)) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${publicUrl.origin}/grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
         const created = now();
         let state = { topic: data.topic, intent: data.context || '', project: data.source.project || '', created, doc: '', agent: { status: 'waiting', handled: 0, since: created }, questions: [], terms: [] };
         const questions = data.questions?.length ? data.questions : [{ id: 'q1', round: 1, title: data.topic, body: data.context || '', options: data.options || [], rec: {} }];
         if (!Array.isArray(questions) || questions.length > 100) fail(400, '问题数量应为 1–100');
         state = applyPatch(state, { questions }, created); validateState(state);
         const page = customPage(data.page);
-        const r = { id: data.id, kind: data.kind, source: data.source, tokenHash: hash(data.requestToken), creationHash, created, updated: created, status: 'waiting', state, events: [], ...(page ? { page } : {}) };
-        store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${publicUrl.origin}/grill/${r.id}/` });
+        const r = { id: data.id, kind: data.kind, source: data.source, ...(name ? {accessMode:'username', username:name} : {tokenHash: hash(data.requestToken)}), creationHash, created, updated: created, status: 'waiting', state, events: [], ...(page ? { page } : {}) };
+        store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${publicUrl.origin}/grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
       }
       const api = p.match(/^\/api\/requests\/([A-Za-z0-9_-]{8,100})(?:\/(wait|ack|visual|cancel))?$/);
       if (api) {
@@ -285,8 +312,8 @@ export function createHandoverServer(options = {}) {
       }
       const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback)?$/);
       if (grill) {
-        if (!owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
-        let r = store.get(grill[1]); if (!r) fail(404, '请求不存在');
+        if (!username(req) && !owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
+        let r = store.get(grill[1]); requireRequestUser(req, r);
         if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id) : page(r), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }
         if (req.method === 'GET' && grill[2] === 'content') {
@@ -295,12 +322,12 @@ export function createHandoverServer(options = {}) {
         }
         if (req.method === 'POST' && grill[2] === 'feedback') {
           const data = await body(req); if (!validId(data.submissionId)) fail(400, '缺少提交身份');
-          r = store.get(grill[1]); requireOwner(req); validateFeedback(data, r);
+          r = store.get(grill[1]); requireRequestUser(req, r); validateFeedback(data, r);
           const digest = hash(JSON.stringify({ feedbackType: data.feedbackType, pageHash: data.pageHash, payload: data.payload }));
           const existing = r.events.find((e) => e.submissionId === data.submissionId);
           if (existing) { if (existing.digest !== digest) fail(409, '相同提交身份的内容不一致'); return json(res, 200, { ok: true, seq: existing.seq, saved: true, handled: (r.state.agent.handled || 0) >= existing.seq }); }
           if (r.state.finished || r.status === 'cancelled') fail(409, '请求已结束');
-          const event = { type: 'feedback', requestId: r.id, sourceSession: r.source.session, seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, feedbackType: data.feedbackType, documentId: r.page.documentId, pageHash: r.page.pageHash, payload: data.payload };
+          const event = { type: 'feedback', requestId: r.id, sourceSession: r.source.session, ...(usernameRecord(r) ? {username:r.username} : {}), seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, feedbackType: data.feedbackType, documentId: r.page.documentId, pageHash: r.page.pageHash, payload: data.payload };
           r.events.push(event); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }
@@ -313,12 +340,12 @@ export function createHandoverServer(options = {}) {
         if (req.method === 'POST' && grill[2] === 'theme') { const data = await body(req); if (!['system', 'light', 'dark'].includes(data.theme)) fail(400, '无效主题'); return json(res, 200, { ok: true }); }
         if (req.method === 'POST' && grill[2] === 'send') {
           const data = await body(req); if (!validId(data.submissionId)) fail(400, '缺少提交身份');
-          r = store.get(grill[1]); requireOwner(req);
+          r = store.get(grill[1]); requireRequestUser(req, r);
           const digest = hash(JSON.stringify(data.actions)), existing = r.events.find((e) => e.submissionId === data.submissionId);
           if (existing) { if (existing.digest !== digest) fail(409, '相同提交身份的内容不一致'); return json(res, 200, { ok: true, seq: existing.seq, saved: true, handled: (r.state.agent.handled || 0) >= existing.seq }); }
           if (r.state.finished || r.status === 'cancelled') fail(409, '请求已结束');
           actionsValid(data.actions, r.state);
-          const event = { type: 'send', requestId: r.id, sourceSession: r.source.session, seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, actions: data.actions };
+          const event = { type: 'send', requestId: r.id, sourceSession: r.source.session, ...(usernameRecord(r) ? {username:r.username} : {}), seq: r.events.length + 1, at: now(), submissionId: data.submissionId, digest, actions: data.actions };
           r.events.push(event); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }

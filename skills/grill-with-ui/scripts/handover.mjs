@@ -26,11 +26,15 @@ function serverUrl(value) {
   if(url.username||url.password||url.search||url.hash||url.pathname!=='/'||(!['https:'].includes(url.protocol)&&!['127.0.0.1','localhost','[::1]'].includes(url.hostname)))throw new Error('服务器必须是 HTTPS 站点地址；本机回环测试可使用 HTTP');
   return url.origin;
 }
+const username = (value) => { if(typeof value!=='string'|| !/^[A-Za-z0-9_-]{1,64}$/.test(value))throw new Error('用户名应为 1–64 个英文字母、数字、下划线或短横线');return value; };
+const requestUrl = (cfg,id='') => cfg.serverUrl+(id?`/grill/${encodeURIComponent(id)}/`:'/')+(cfg.username?'?username='+encodeURIComponent(cfg.username):'');
 function config() {
   const saved=read(configFile(),{});
   const url=process.env.HANDOVER_SERVER_URL||saved.serverUrl;
   if(!url)throw new Error('请先配置 HANDOVER_SERVER_URL 或本地 config.json');
-  return {serverUrl:serverUrl(url),agentToken:process.env.HANDOVER_AGENT_TOKEN||saved.agentToken};
+  const agentToken=process.env.HANDOVER_AGENT_TOKEN||saved.agentToken;
+  const target=process.env.HANDOVER_USERNAME??saved.username??(agentToken?undefined:'Xpy');
+  return {serverUrl:serverUrl(url),agentToken,username:target===undefined?undefined:username(target)};
 }
 const sourceSession = (o) => {
   const env=process.env.CODEX_THREAD_ID||process.env.CLAUDE_SESSION_ID;
@@ -40,30 +44,31 @@ const sourceSession = (o) => {
 function handleFor(o) {
   if(typeof o.handle!=='string')throw new Error('需要 --handle <创建时返回的绝对路径>');
   const file=path.resolve(o.handle),h=read(file);
-  if(!h||h.schema!==1||typeof h.id!=='string'||typeof h.requestToken!=='string'||!h.source)throw new Error('handle 文件不存在或格式不正确');
+  if(!h||![1,2].includes(h.schema)||typeof h.id!=='string'||(h.schema===1?typeof h.requestToken!=='string':typeof h.username!=='string')||!h.source)throw new Error('handle 文件不存在或格式不正确');
   if(sourceSession(o)!==h.source.session)throw new Error('此请求不属于当前来源会话');
   if(process.platform!=='win32'&&(fs.statSync(file).mode&0o077))throw new Error('handle 必须仅当前用户可读，请设置权限 0600');
+  if(h.schema===2)username(h.username);
   h.serverUrl=serverUrl(h.serverUrl); return {file,h};
 }
-async function request(base,route,{key,source,method='GET',data,timeout=10000,signal}={}) {
+async function request(base,route,{key,source,username,method='GET',data,timeout=10000,signal}={}) {
   const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),timeout);
   const abort=()=>controller.abort(); signal?.addEventListener('abort',abort,{once:true});
   try {
-    const headers={}; if(key)headers.Authorization=`Bearer ${key}`; if(source)headers['X-Handover-Source']=source;
+    const headers={}; if(key)headers.Authorization=`Bearer ${key}`; if(source)headers['X-Handover-Source']=source; if(username)headers['X-Handover-Username']=username;
     if(data!==undefined)headers['Content-Type']='application/json';
     const response=await fetch(base+route,{method,headers,body:data===undefined?undefined:JSON.stringify(data),signal:controller.signal,redirect:'error'});
     const result=await response.json(); if(!response.ok)throw Object.assign(new Error(result.error||`HTTP ${response.status}`),{status:response.status}); return result;
   } finally { clearTimeout(timer); signal?.removeEventListener('abort',abort); }
 }
-const scoped = (h,route='',options={}) => request(h.serverUrl,`/api/requests/${encodeURIComponent(h.id)}${route}`,{key:h.requestToken,source:h.source.session,...options});
+const scoped = (h,route='',options={}) => request(h.serverUrl,`/api/requests/${encodeURIComponent(h.id)}${route}`,{key:h.schema===1?h.requestToken:undefined,username:h.schema===2?h.username:undefined,source:h.source.session,...options});
 function input(o) {
   if(typeof o.file==='string')return JSON.parse(fs.readFileSync(path.resolve(o.file),'utf8'));
   if(o.stdin)return JSON.parse(fs.readFileSync(0,'utf8'));
   return {};
 }
 async function openBrowser(cfg,requestId='') {
-  if(!cfg.agentToken)throw new Error('自动登录需要本地 Agent 凭据');
-  const result=await request(cfg.serverUrl,'/api/browser-tickets',{key:cfg.agentToken,method:'POST',data:{requestId}});
+  if(!cfg.username&&!cfg.agentToken)throw new Error('旧模式自动登录需要本地 Agent 凭据');
+  const result=cfg.username?{loginUrl:requestUrl(cfg,requestId)}:await request(cfg.serverUrl,'/api/browser-tickets',{key:cfg.agentToken,method:'POST',data:{requestId}});
   try {
     if(process.env.HANDOVER_NO_OPEN==='1')return {opened:false};
     if(process.platform==='darwin')execFileSync('/usr/bin/open',[result.loginUrl],{stdio:'ignore',timeout:8000});
@@ -85,7 +90,7 @@ function lockWait(file) {
 }
 export async function main(argv=process.argv.slice(2)) {
   const o=args(argv),command=o._[0]||'help';
-  if(command==='help') { out({commands:{probe:'probe；探测自定义 HTML / JSON 桥接能力，不创建请求',update:'update；检查 GitHub main 并更新本地两份 Skill',config:'config --server HTTPS_URL [--token-stdin] | config --show',new:'new --kind questionnaire|feedback|help --topic 标题 [--file JSON | --stdin] [--context 内容] [--no-open]',resume:'resume --handle FILE',wait:'wait --handle FILE [--timeout 25] [--after SEQ]；单次最长 30 秒，超时退出码 3',pending:'pending --handle FILE',patch:'patch --handle FILE --file PATCH_JSON | --stdin',ack:'ack --handle FILE --seq N',finish:'finish --handle FILE [--doc PATH]',cancel:'cancel --handle FILE',open:'open --handle FILE | home',state:'state --handle FILE',visual:'visual --handle FILE --file HTML',sessions:'sessions [--source-session ID]'},config:configFile(),state:stateHome()}); return; }
+  if(command==='help') { out({commands:{probe:'probe；探测自定义 HTML / JSON 桥接能力，不创建请求',update:'update；检查 GitHub main 并更新本地两份 Skill',config:'config --server HTTPS_URL [--username Xpy | --token-stdin] | config --show',new:'new --kind questionnaire|feedback|help --topic 标题 [--file JSON | --stdin] [--context 内容] [--no-open]',resume:'resume --handle FILE',wait:'wait --handle FILE [--timeout 25] [--after SEQ]；单次最长 30 秒，超时退出码 3',pending:'pending --handle FILE',patch:'patch --handle FILE --file PATCH_JSON | --stdin',ack:'ack --handle FILE --seq N',finish:'finish --handle FILE [--doc PATH]',cancel:'cancel --handle FILE',open:'open --handle FILE | home',state:'state --handle FILE',visual:'visual --handle FILE --file HTML',sessions:'sessions [--source-session ID]'},config:configFile(),state:stateHome()}); return; }
   if(command==='update') { const result=await updateSkills();out(result);if(!result.ok)process.exitCode=1;return; }
   if(['new','resume','home'].includes(command) && process.env.HANDOVER_SKIP_UPDATE!=='1' && !process.env.HANDOVER_UPDATE_CHECKED) {
     const result=await updateSkills();process.stderr.write(JSON.stringify({event:'skill_update',...result})+'\n');
@@ -98,27 +103,29 @@ export async function main(argv=process.argv.slice(2)) {
     const file=configFile(),saved=read(file,{});
     if(o.server)saved.serverUrl=serverUrl(o.server);
     if(o['token-stdin']) { const value=fs.readFileSync(0,'utf8').trim(); if(value.length<32)throw new Error('Agent 密钥至少 32 字符');saved.agentToken=value; }
-    if(o.server||o['token-stdin'])atomic(file,saved);
-    out({ok:true,file,serverUrl:process.env.HANDOVER_SERVER_URL||saved.serverUrl,tokenConfigured:!!(process.env.HANDOVER_AGENT_TOKEN||saved.agentToken)});return;
+    if(o.username!==undefined)saved.username=username(o.username);
+    if(o.server||o['token-stdin']||o.username!==undefined)atomic(file,saved);
+    out({ok:true,file,serverUrl:process.env.HANDOVER_SERVER_URL||saved.serverUrl,username:process.env.HANDOVER_USERNAME??saved.username??((process.env.HANDOVER_AGENT_TOKEN||saved.agentToken)?undefined:'Xpy'),tokenConfigured:!!(process.env.HANDOVER_AGENT_TOKEN||saved.agentToken)});return;
   }
-  if(command==='home') { const cfg=config(); out({ok:true,url:cfg.serverUrl+'/',...await openBrowser(cfg)});return; }
+  if(command==='home') { const cfg=config(); out({ok:true,url:requestUrl(cfg),...await openBrowser(cfg)});return; }
   if(command==='probe') {
-    try { const cfg=config(); const result=await request(cfg.serverUrl,'/api/capabilities',{key:cfg.agentToken,timeout:4000});out({...result,available:result.service==='handover-ui'&&result.customPage?.version===1}); }
+    try { const cfg=config(); const result=await request(cfg.serverUrl,'/api/capabilities',{key:cfg.username?undefined:cfg.agentToken,username:cfg.username,timeout:4000});out({...result,available:result.service==='handover-ui'&&result.customPage?.version===1}); }
     catch(error) { out({ok:false,available:false,status:error.status,note:'远程页面桥接不可用，可使用本地 HTML 和导出 JSON。'});process.exitCode=1; }return;
   }
   if(command==='sessions') {
     const dir=path.join(stateHome(),'requests'),current=process.env.CODEX_THREAD_ID||o['source-session'];
-    const list=fs.existsSync(dir)?fs.readdirSync(dir).filter((f)=>f.endsWith('.json')).map((f)=>({file:path.join(dir,f),h:read(path.join(dir,f))})).filter(({h})=>h&&(!current||h.source.session===current)).map(({file,h})=>({handle:file,requestId:h.id,source:h.source,serverUrl:h.serverUrl,cursor:h.cursor||0,created:h.created})):[];
+    const list=fs.existsSync(dir)?fs.readdirSync(dir).filter((f)=>f.endsWith('.json')).map((f)=>({file:path.join(dir,f),h:read(path.join(dir,f))})).filter(({h})=>h&&(!current||h.source.session===current)).map(({file,h})=>({handle:file,requestId:h.id,source:h.source,serverUrl:h.serverUrl,username:h.username,cursor:h.cursor||0,created:h.created})):[];
     out({requests:list});return;
   }
   if(command==='new') {
     const cfg=config(),data=input(o),id=crypto.randomUUID(),key=crypto.randomBytes(32).toString('base64url');
     const source={session:sourceSession(o),project:typeof o.project==='string'?o.project:process.cwd(),machine:os.hostname()};
-    const payload={...data,id,requestToken:key,source,kind:o.kind||data.kind||'questionnaire',topic:o.topic||data.topic||'',context:o.context||data.context||''};
+    const payload={...data,id,...(cfg.username?{username:cfg.username}:{requestToken:key}),source,kind:o.kind||data.kind||'questionnaire',topic:o.topic||data.topic||'',context:o.context||data.context||''};
     const file=path.join(stateHome(),'requests',id+'.json');
-    const h={schema:1,id,requestToken:key,source,serverUrl:cfg.serverUrl,created:new Date().toISOString(),cursor:0,creation:payload,registered:false};atomic(file,h);
+    if(cfg.username)delete payload.requestToken;else delete payload.username;
+    const h={schema:cfg.username?2:1,id,...(cfg.username?{username:cfg.username}:{requestToken:key}),source,serverUrl:cfg.serverUrl,created:new Date().toISOString(),cursor:0,creation:payload,registered:false};atomic(file,h);
     try{
-      const result=await request(cfg.serverUrl,'/api/requests',{key:cfg.agentToken,method:'POST',data:payload});
+      const result=await request(cfg.serverUrl,'/api/requests',{key:cfg.username?undefined:cfg.agentToken,username:cfg.username,method:'POST',data:payload});
       h.registered=true;atomic(file,h);
       let opened={opened:false}; if(!o['no-open'])try{opened=await openBrowser(cfg,id);}catch{opened={opened:false,note:'请求已保存，自动登录未完成。可使用 open 重试。'};}
       out({ok:true,handle:file,requestId:id,source,url:result.url,...opened});
@@ -128,11 +135,11 @@ export async function main(argv=process.argv.slice(2)) {
   if(command==='resume') {
     if(!h.registered) {
       const cfg=config();if(cfg.serverUrl!==h.serverUrl)throw new Error('当前配置已指向其他服务器，请恢复原服务器配置后重试创建');
-      await request(h.serverUrl,'/api/requests',{key:cfg.agentToken,method:'POST',data:h.creation}); h.registered=true;atomic(file,h);
+      await request(h.serverUrl,'/api/requests',{key:h.schema===1?cfg.agentToken:undefined,username:h.schema===2?h.username:undefined,method:'POST',data:h.creation}); h.registered=true;atomic(file,h);
     }
-    const result=await scoped(h);out({ok:true,handle:file,requestId:h.id,source:h.source,status:result.status,handled:result.handled,url:`${h.serverUrl}/grill/${h.id}/`});return;
+    const result=await scoped(h);out({ok:true,handle:file,requestId:h.id,source:h.source,status:result.status,handled:result.handled,url:requestUrl(h,h.id)});return;
   }
-  if(command==='open') { const cfg=config();if(cfg.serverUrl!==h.serverUrl)throw new Error('当前服务器配置与 handle 不一致');out({ok:true,url:`${h.serverUrl}/grill/${h.id}/`,...await openBrowser(cfg,h.id)});return; }
+  if(command==='open') { const cfg=config();if(cfg.serverUrl!==h.serverUrl)throw new Error('当前服务器配置与 handle 不一致');out({ok:true,url:requestUrl(h,h.id),...await openBrowser({...cfg,username:h.schema===2?h.username:undefined},h.id)});return; }
   if(command==='state') { out(await scoped(h));return; }
   if(command==='wait'||command==='pending') {
     const timeout=command==='pending'?0:Number(o.timeout??25);
@@ -142,7 +149,7 @@ export async function main(argv=process.argv.slice(2)) {
     process.once('SIGINT',stop);process.once('SIGTERM',stop);
     try{
       const result=await scoped(h,'/wait?'+params,{timeout:(timeout+5)*1000,signal:abort.signal});
-      if(result.requestId!==h.id||result.source?.session!==h.source.session)throw new Error('服务器返回的请求或来源身份不匹配');
+      if(result.requestId!==h.id||result.source?.session!==h.source.session||(h.schema===2&&result.username!==h.username))throw new Error('服务器返回的请求或来源身份不匹配');
       out(result); if(!result.events.length)process.exitCode=['completed','cancelled'].includes(result.status)?0:3;
     }catch(e){if(abort.signal.aborted){out({ok:false,status:'interrupted',requestId:h.id,handle:file,cursor:h.cursor||0});process.exitCode=130;}else throw e;}
     finally{unlock();process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}return;

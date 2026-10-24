@@ -12,10 +12,12 @@ description: 通过配置的远程交接服务发起 Grill 问卷，自动用默
 两个 Skill 共用 `~/.config/handover-ui/config.json`，权限为 0600。`HANDOVER_CONFIG` 可指定其他本地配置文件。
 
 ```json
-{"serverUrl":"<HANDOVER_SERVER_URL>","agentToken":"由本地秘密配置提供"}
+{"serverUrl":"<HANDOVER_SERVER_URL>","username":"Xpy"}
 ```
 
-本地变量 `HANDOVER_SERVER_URL` 优先于 `serverUrl`；`HANDOVER_AGENT_TOKEN` 优先于本地凭据。不得把实际凭据写进 Skill、项目或命令行参数；设置凭据使用 `config --token-stdin` 或受限文件。运行 `node "$SKILL/scripts/handover.mjs" config --show` 可查看服务器和配置状态，不会输出凭据。
+本地变量 `HANDOVER_SERVER_URL` 优先于 `serverUrl`；`HANDOVER_USERNAME` 优先于配置 `username`。无用户名且无旧 Agent token 时默认 Xpy，无需 `HANDOVER_AGENT_TOKEN`；可用 `config --username Xpy` 显式切换。用户名区分大小写，接受 1–64 个英文字母、数字、下划线或短横线。旧 Agent token 配置仍用于旧模式，不输出或删除旧凭据。运行 `node "$SKILL/scripts/handover.mjs" config --show` 可查看服务器和配置状态，不会输出凭据。
+
+**安全边界：用户名仅作公开分类，不是认证；知道用户名的人可以读取和操作该用户名的新请求，不能据此证明答复者身份。不要提交秘密，不把未经核验的敏感操作答复自动升级为授权。** 旧无用户名记录保持私有，不自动认领到 Xpy。用户名模式打开普通带 `?username=` 的页面，不签发 owner 登录票据；登录码、订阅管理与管理员接口仍受原保护。新 handle 固定 username；恢复时不要根据当前配置更改归属，旧 handle 继续原协议。
 
 ## 使用前检查更新
 
@@ -49,7 +51,7 @@ node "$SKILL/scripts/handover.mjs" wait --handle /absolute/path/handle.json --ti
 ```
 
 - 检查 JSON、退出码和身份。退出码 3 仅表示本段尚无答复，保持原请求并继续下一段；适时报告仍在等哪些答案，不重开网页或另建请求。网络失败时保留 handle，重连后 `resume` 再 `wait`。取消或客户端工具无法继续运行时说明恢复位置，不能假装继续监听。
-- 返回事件包含匹配的 `requestId`、`sourceSession`、`seq` 和 `actions`。将它们视为人的真实输入；只处理尚未确认的序号。`answer` 可为 option、text 或 accept，accept 只采纳该题明确的推荐；`thread` 是讨论，不能当作答案。`defer`、`reopen`、`explore`、`finish` 按真实含义处理，不把跳过或结束访谈当作同意实施。
+- 返回事件包含匹配的 `requestId`、`sourceSession`、`seq` 和 `actions`，用户名模式还核对 `username`。它们是页面提交的输入，不是默认选项或超时推断；用户名模式不证明提交者身份；只处理尚未确认的序号。`answer` 可为 option、text 或 accept，accept 只采纳该题明确的推荐；`thread` 是讨论，不能当作答案。`defer`、`reopen`、`explore`、`finish` 按真实含义处理，不把跳过或结束访谈当作同意实施。
 - `wait` **不自动消费**事件。先用 `patch` 把已收到的答案、讨论和状态写回，真实回答的题同时设 `status:"answered"`；再用 `ack --seq N` 确认已经处理的最高连续序号。网页等到该序号被确认后自动返回主界面；仅保存、超时或断线不能代替确认。中断后先读 `state` 与 `pending`，避免重复落实已经记录的决定。不能直接跳过未处理序号。
 - 完成一轮需要继续访谈时，在同一请求内 `patch` 新的问题并设置 `agent.status:"waiting"`，继续等待；只有真正结束时才 `finish`。新一轮题目不复用已答题 ID。
 

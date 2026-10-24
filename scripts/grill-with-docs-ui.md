@@ -9,12 +9,14 @@ description: 通过远程 Grill 问卷进行设计访谈，同时维护项目领
 
 ## 加载依赖
 
-- [grill-with-ui](../grill-with-ui/SKILL.md)：使用前 GitHub 更新检查、本地服务器变量、凭据、请求创建、默认浏览器、来源身份、前台等待、消费确认和恢复。使用它的 `scripts/handover.mjs`，不复制或启动旧版服务器。
+- [grill-with-ui](../grill-with-ui/SKILL.md)：使用前 GitHub 更新检查、本地服务器变量、目标用户名及旧模式凭据、请求创建、默认浏览器、来源身份、前台等待、消费确认和恢复。使用它的 `scripts/handover.mjs`，不复制或启动旧版服务器。
 - [grill-with-docs](../grill-with-docs/SKILL.md)：维护词汇表和符合条件的 ADR。
 - [grilling](../grilling/SKILL.md)：设计探索与待解决问题。已确认的决定及实施授权继续有效，不重复设置确认关卡。
 - [domain-modeling](../domain-modeling/SKILL.md)：文档归属、词汇表及 ADR 标准；写相应文档前读取它的格式说明。
 
 相对路径以本 Skill 为基准；命令中的 `$SKILL` 指 `grill-with-ui` 的目录。缺依赖时先查找已安装位置，如实说明不可用步骤。只编辑、审查本 Skill 时不发起访谈；用户要求聊天文字版时直接遵从。
+
+用户名模式无需 Agent token，默认目标为 Xpy；用户名仅是公开分类，不能证明答复者身份。遵循 sibling 的安全边界，不把此模式的反馈自动升级为敏感操作授权，旧私有请求不自动迁移。
 
 ## 文档归属
 

@@ -1,12 +1,16 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
+const username = new URLSearchParams(location.search).get('username');
+const userQuery = username === null ? '' : '?' + new URLSearchParams({username});
 let requests = [], user = null, installPrompt = null, loading = false;
 const kinds = {questionnaire:'问卷',feedback:'反馈',help:'求助'};
 const states = {waiting:'等待你回答',submitted:'答复已保存，等待 Agent 处理',completed:'已结束',cancelled:'已取消'};
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const message = (s = '') => { $('message').textContent = s; };
 async function api(path, data, method = 'POST') {
-  const response = await fetch(path, data === undefined ? {cache:'no-store'} : {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  if (username !== null && !['/api/me','/api/requests'].includes(path)) throw new Error('用户名模式不提供登录或设备管理权限');
+  const headers = username === null ? {} : {'X-Handover-Username':username};
+  const response = await fetch(path, data === undefined ? {cache:'no-store',headers} : {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(data)});
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '连接失败'); return result;
 }
 function render() {
@@ -16,7 +20,7 @@ function render() {
   const list = requests.filter((r) => (kind === 'all' || r.kind === kind) && (status === 'all' || (status === 'open' ? !['completed','cancelled'].includes(r.status) : ['completed','cancelled'].includes(r.status))) && (!search || [r.topic,r.source.session,r.source.project].join(' ').toLowerCase().includes(search)));
   $('requests').innerHTML = list.length ? list.map((r) => {
     const project = (r.source.project || '').split(/[\\/]/).filter(Boolean).pop() || '未命名项目';
-    return `<a class="request" href="/grill/${encodeURIComponent(r.id)}/"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(states[r.status])}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
+    return `<a class="request" href="/grill/${encodeURIComponent(r.id)}/${esc(userQuery)}"><div class="request-head"><span class="tag">${esc(kinds[r.kind])}</span><span class="state">${esc(states[r.status])}</span></div><h3>${esc(r.topic)}</h3><div class="meta"><span>${esc(project)}</span><span>来源 ${esc(r.source.session.slice(0,12))}</span><time datetime="${esc(r.created)}">${esc(new Date(r.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div></a>`;
   }).join('') : '<div class="empty">这里暂时没有请求。<br>Agent 发起问卷、反馈或求助后，会显示在这里。</div>';
   if ('setAppBadge' in navigator) { if(open.length) navigator.setAppBadge(open.length).catch(()=>{}); else navigator.clearAppBadge().catch(()=>{}); }
 }
@@ -24,11 +28,14 @@ async function refresh() {
   if (loading) return; loading = true;
   try {
     user = await api('/api/me'); $('version').textContent = user.version === 'development' ? '开发环境' : user.version.slice(0,12);
-    $('login').hidden = user.authenticated; $('workspace').hidden = !user.authenticated;
-    if (user.authenticated) {
+    const available = username !== null ? user.mode === 'username' && user.username === username : user.authenticated;
+    $('login').hidden = username !== null || user.authenticated; $('workspace').hidden = !available;
+    $('settings-toggle').hidden = username !== null; $('settings').hidden = username !== null || $('settings').hidden;
+    $('username-status').textContent = username === null ? '' : `当前公开用户名：${username}（不是身份认证）`;
+    if (available) {
       requests = (await api('/api/requests')).requests; render();
       const pending = new URLSearchParams(location.search).get('request');
-      if (pending && /^[A-Za-z0-9_-]{8,100}$/.test(pending)) location.replace(`/grill/${pending}/`);
+      if (pending && /^[A-Za-z0-9_-]{8,100}$/.test(pending)) location.replace(`/grill/${pending}/${userQuery}`);
     }
     $('connection').textContent = '● 已连接'; message();
   } catch (error) { $('connection').textContent = '○ 连接中断'; message('当前无法连接服务器，已填写的内容会保留。' + (navigator.onLine ? '' : '请恢复网络后重试。')); }
@@ -37,6 +44,8 @@ async function refresh() {
 async function task(button, fn) {
   button.disabled = true; message(); try { await fn(); } catch(e) { message(e.message); } finally { button.disabled = false; }
 }
+$('username').value = username ?? 'Xpy';
+$('username-form').onsubmit = (event) => { event.preventDefault(); const value = $('username').value; if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) { message('用户名需为 1–64 个英文字母、数字、下划线或连字符'); return; } location.assign('/?' + new URLSearchParams({username:value})); };
 $('login-form').onsubmit = (event) => { event.preventDefault(); task(event.submitter, async () => { await api('/api/login',{token:$('login-code').value.trim()}); $('login-code').value=''; await refresh(); }); };
 $('refresh').onclick = () => refresh();
 $('settings-toggle').onclick = () => { $('settings').hidden = !$('settings').hidden; $('settings-toggle').setAttribute('aria-expanded',String(!$('settings').hidden)); };
@@ -61,7 +70,7 @@ $('push').onclick = () => task($('push'),async () => {
 async function init() {
   if('serviceWorker' in navigator) await navigator.serviceWorker.register('/sw.js').catch(()=>{});
   const ticket=new URLSearchParams(location.hash.slice(1)).get('ticket');
-  if(ticket) {
+  if(ticket && username === null) {
     history.replaceState(null,'',location.pathname+location.search);
     try { const result=await api('/api/login/ticket',{ticket}); if(result.requestId) { location.replace(`/grill/${result.requestId}/`); return; } }
     catch(e) { message(e.message); $('login').hidden=false; return; }
@@ -70,5 +79,5 @@ async function init() {
 }
 window.addEventListener('online',refresh);
 window.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
-setInterval(()=>{if(!document.hidden && user?.authenticated)refresh();},10000);
+setInterval(()=>{if(!document.hidden && (user?.authenticated || user?.mode === 'username'))refresh();},10000);
 init();

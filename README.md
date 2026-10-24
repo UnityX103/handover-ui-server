@@ -15,7 +15,9 @@ Agent 发起请求，自动打开默认浏览器，并在当前回合分段等�
 
 ## 手机使用
 
-1. 电脑由客户端 `home` 自动打开并登录。在“设备与通知”点击“查看登录码”。
+用户名模式可直接打开带 `?username=Xpy` 的首页和请求；下列登录与通知管理属于受保护的旧 owner 功能，不会仅凭用户名开放。
+
+1. 旧模式电脑由客户端 `home` 自动打开并登录。在“设备与通知”点击“查看登录码”。
 2. 手机打开同一公网入口，输入固定登录码；长期有效、可重复使用，服务更新和重启后不变，由服务器环境变量维护。iPhone 用 Safari 分享菜单“添加到主屏幕”，Android 用浏览器“安装应用 / 添加到主屏幕”。
 3. 从桌面图标打开，在“设备与通知”点击“开启通知”并授予权限。iPhone Web Push 需要 iOS/iPadOS 16.4 或更新版本的桌面 Web App。
 
@@ -36,15 +38,19 @@ npm run install:skills
 两份 Skill 共用 `~/.config/handover-ui/config.json`（0600）：
 
 ```json
-{"serverUrl":"<HANDOVER_SERVER_URL>","agentToken":"由受限本地配置保存"}
+{"serverUrl":"<HANDOVER_SERVER_URL>","username":"Xpy"}
 ```
 
-本地变量 `HANDOVER_SERVER_URL` 可覆盖目标服务器；`HANDOVER_AGENT_TOKEN` 覆盖本地 Agent 凭据。`HANDOVER_CONFIG` 可指定其他配置文件。不要把凭据放进 Skill 或命令行参数。
+本地变量 `HANDOVER_SERVER_URL` 可覆盖目标服务器；`HANDOVER_USERNAME` 覆盖目标用户名。未设置用户名且未配置旧 Agent 凭据时默认使用 `Xpy`，无需填写 `HANDOVER_AGENT_TOKEN`。用户名区分大小写，仅接受 1–64 个英文字母、数字、下划线或短横线。`HANDOVER_CONFIG` 可指定其他配置文件。
+
+**用户名只是公开命名空间，不是登录认证。任何知道用户名的人都可能读取、提交、修改或结束其新请求，不能凭用户名证明答复者身份。** 不要在此模式放入秘密或需要保密的资料。来源会话仍用于防止客户端误接其他会话事件，不是身份认证。旧的无用户名记录不会自动转入 Xpy，仍保留原登录与每请求凭据保护；旧配置中的 `agentToken` / `HANDOVER_AGENT_TOKEN` 继续支持旧模式。显式设置用户名即使用用户名模式，即使旧 token 仍存在。
+
+用户名模式的浏览器打开不签发登录票据，也不能查看登录码、管理订阅或取得 owner 权限；用户名请求不会发送 Web Push，以免泄漏给旧模式设备订阅。旧登录、管理功能和 Webhook 保持独立保护。
 
 ```sh
 node cli.mjs config --show
 node cli.mjs update
-node cli.mjs config --server "$HANDOVER_SERVER_URL" --token-stdin
+node cli.mjs config --server "$HANDOVER_SERVER_URL" --username Xpy
 node cli.mjs home
 ```
 
@@ -63,7 +69,7 @@ node cli.mjs ack --handle /absolute/path/handle.json --seq 1
 node cli.mjs finish --handle /absolute/path/handle.json
 ```
 
-创建返回绝对 handle 路径、请求 ID 和普通 URL，自动打开的登录链接只在浏览器片段携带一次性票据。handle 以 0600 保存，含每请求凭据和创建载荷；网络故障后 `resume --handle` 继续相同请求，不能重复创建。
+创建返回绝对 handle 路径、请求 ID 和普通 URL。用户名模式 URL 携带 `?username=Xpy`，schema 2 handle 保存不可变用户名与创建载荷，不需要每请求秘密；旧模式 schema 1 handle 保留每请求凭据，自动打开的登录链接只在浏览器片段携带一次性票据。所有 handle 仍以 0600 保存。切换配置不会改写已有请求归属；网络故障后 `resume --handle` 继续相同请求，不能重复创建。
 
 `wait` 最长 30 秒，退出 3 只表示本段没有答复，继续同一请求的下一段。每个请求只允许一个前台等待者。返回事件含 `requestId`、`sourceSession` 和连续 `seq`；读取不自动消费。先落实收到的真实答案、写回状态，再 `ack` 已处理的最高连续序号。中断后检查 `state` 与 `pending`，避免重复落实；`ack` 成功但响应丢失时，以服务端已确认游标为准。
 
@@ -112,7 +118,7 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium npm run test:browser
 
 ## 自定义页面与 JSON 反馈
 
-服务也可作为桥接层，承载 Skill 自己生成的自包含 HTML，并将其自定义 JSON 反馈交回来源会话。先用 `node cli.mjs probe` 检查能力；创建载荷中的 `page` 提供 `version:1`、`html`、`feedbackType` 和 `documentId`。页面调用 `window.HandoverBridge.submit(payload)` 提交，收到的事件为 `type:"feedback"`，原始 JSON 位于 `payload`。先保存和核验，再明确 `ack`；通知与自动返回沿用原请求机制。
+服务也可作为桥接层，承载 Skill 自己生成的自包含 HTML，并将其自定义 JSON 反馈交回来源会话。先用 `node cli.mjs probe` 检查能力；创建载荷中的 `page` 提供 `version:1`、`html`、`feedbackType` 和 `documentId`。页面调用 `window.HandoverBridge.submit(payload)` 提交，收到的事件为 `type:"feedback"`，原始 JSON 位于 `payload`。先保存和核验，再明确 `ack`；自动返回沿用原请求机制并保留用户名。只有旧认证模式请求发送 Web Push，用户名请求不发送通知。
 
 自定义 HTML 在隔离 iframe 中运行，不获得本站 Cookie、存储或网络访问能力；HTML 和反馈有大小限制。业务决定、JSON 结构校验及执行授权由来源 Skill 负责，服务不执行反馈中的命令。页面应始终保留本地导出 JSON 的能力；客户端、配置或服务器能力缺失时使用离线 HTML／JSON。创建结果未知时保留原 handle，核对同一请求，不重复创建。详细接入见 [自定义页面契约](skills/grill-with-ui/references/custom-pages.md)。
 
