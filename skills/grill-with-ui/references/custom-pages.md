@@ -14,6 +14,8 @@
 
 HTML 最大 4 MiB，反馈 JSON 最大 512 KiB；以 `probe` 返回的限制为准，过大时离线交接。页面与文档身份在请求创建后保持固定，新的审核版本使用新的明确身份。创建结果未知时保留原 handle 并恢复同一请求，不重复创建。
 
+创建后立即在来源普通聊天展示可点击的 `url`、所属 Skill 及待反馈事项。用户名模式的 URL 保留 `?username=`，不输入密码便可直达此页面；恢复时沿原 handle 的用户名，不用首页替代，也不重复创建。目标用户通过配置 `username` 或 `HANDOVER_USERNAME` 指定，不要求 Agent token；旧请求沿原协议。
+
 ## 页面
 
 远端在隔离 iframe 中提供 `window.HandoverBridge`。页面根据自己的字段生成 payload，并在用户主动提交时调用：

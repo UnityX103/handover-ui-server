@@ -179,7 +179,7 @@ test('原 Grill 页面通过请求路由复用，脚本语法、离线边界和�
 });
 
 test('通用客户端：前台超时退出 3、来源校验、恢复和显式确认消费',async(t)=>{
-  const f=await fixture(t),home=path.join(f.dir,'client'),env={...process.env,CODEX_THREAD_ID:'cli-fixture-one',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_STATE_DIR:home,HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'1'};
+  const f=await fixture(t),home=path.join(f.dir,'client'),env={...process.env,CODEX_THREAD_ID:'cli-fixture-one',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:undefined,HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:home,HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'1'};
   const cli=path.resolve('skills/grill-with-ui/scripts/handover.mjs');
   const run=async(args,extra={})=>{try{const r=await exec(process.execPath,[cli,...args],{env:{...env,...extra}});return {code:0,data:JSON.parse(r.stdout)};}catch(e){return {code:e.code,data:JSON.parse(e.stdout)};}};
   const created=await run(['new','--kind','help','--topic','客户端隔离测试','--no-open']);assert.equal(created.code,0);const handle=created.data.handle;
@@ -205,7 +205,7 @@ const args=process.argv.slice(2);fs.appendFileSync(process.env.HANDOVER_TEST_GIT
 if(args[1].endsWith('/commits/main'))process.stdout.write(fixture.version+'\\n');
 else {const target=new URL('https://api.github.com/'+args.at(-1));if(target.searchParams.get('ref')!==fixture.version)process.exit(1);const file=target.pathname.split('/contents/')[1];process.stdout.write(file==='skills/manifest.json'?JSON.stringify(fixture.manifest):fixture.files[file]);}
 `,{mode:0o700});
-  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',HANDOVER_TEST_GITHUB_FIXTURE:snapshot,HANDOVER_TEST_GITHUB_CALLS:calls};
+  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:undefined,HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',HANDOVER_TEST_GITHUB_FIXTURE:snapshot,HANDOVER_TEST_GITHUB_CALLS:calls};
   const cli=path.resolve('skills/grill-with-ui/scripts/handover.mjs');
   const created=await exec(process.execPath,[cli,'new','--kind','help','--topic','更新后创建隔离请求','--no-open'],{env});
   const result=JSON.parse(created.stdout);

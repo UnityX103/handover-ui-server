@@ -40,7 +40,9 @@ description: 通过配置的远程交接服务发起 Grill 问卷，自动用默
 node "$SKILL/scripts/handover.mjs" new --kind questionnaire --file /absolute/path/questions.json
 ```
 
-保存返回的绝对 `handle`、`requestId` 和来源身份。`opened:true` 仅表示发出系统打开命令，不能当作页面加载或答复已送达。打不开时保留请求，给出普通页面地址；用 `open --handle` 重试打开，不重复创建。
+保存返回的绝对 `handle`、`requestId` 和来源身份。每次创建或追加待答问题后，立即在来源普通聊天贴出该请求的可点击 `url`，标明问题及背景。用户名模式的链接必须保留 `?username=Xpy`（或 handle 中的实际用户名），可免密码直达原题；不要替换为首页。已有请求可用 `resume --handle` 取回链接，不重复创建。
+
+`opened:true` 仅表示发出系统打开命令，不能当作页面加载或答复已送达。打不开时保留链接和请求，用 `open --handle` 重试打开。用户名模式不发送旧模式的 Web Push，通过上述直达链接在电脑或手机处理。
 
 ## 在当前回合等待
 

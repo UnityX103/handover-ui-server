@@ -16,11 +16,10 @@ const helper = path.join(root, '.agents/skills/mida-segment-autotest/scripts/rev
 const cli = path.resolve('cli.mjs');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-browser-'));
 const output = fs.mkdtempSync(path.join(fs.mkdirSync(path.join(root, 'TestTemp/SegmentFlow/BridgeIntegration'), { recursive: true }) || path.join(root, 'TestTemp/SegmentFlow/BridgeIntegration'), 'case-'));
-const agentToken = crypto.randomBytes(32).toString('hex'), adminToken = crypto.randomBytes(32).toString('hex');
-const app = createHandoverServer({ dataDir: path.join(dir, 'server'), agentToken, adminToken, publicUrl: 'http://127.0.0.1:0', port: 0, disablePush: true });
+const app = createHandoverServer({ dataDir: path.join(dir, 'server'), agentToken: undefined, adminToken: crypto.randomBytes(32).toString('hex'), publicUrl: 'http://127.0.0.1:0', port: 0, disablePush: true });
 await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${app.server.address().port}`;
-const environment = { ...process.env, CODEX_THREAD_ID: 'isolated-mida-bridge-source', CLAUDE_SESSION_ID: '', HANDOVER_SKIP_UPDATE: '1', HANDOVER_NO_OPEN: '1', HANDOVER_STATE_DIR: path.join(dir, 'client-state'), HANDOVER_CONFIG: path.join(dir, 'absent-config.json'), HANDOVER_SERVER_URL: base, HANDOVER_AGENT_TOKEN: agentToken };
+const environment = { ...process.env, CODEX_THREAD_ID: 'isolated-mida-bridge-source', CLAUDE_SESSION_ID: '', HANDOVER_SKIP_UPDATE: '1', HANDOVER_NO_OPEN: '1', HANDOVER_STATE_DIR: path.join(dir, 'client-state'), HANDOVER_CONFIG: path.join(dir, 'absent-config.json'), HANDOVER_SERVER_URL: base, HANDOVER_USERNAME: 'Xpy', HANDOVER_AGENT_TOKEN: '' };
 const run = async (argv, env = environment, project = root) => {
   try { const result = await exec(python, [helper, ...argv, '--root', project], { env, maxBuffer: 2 * 1024 * 1024 }); return JSON.parse(result.stdout.trim()); }
   catch (error) { throw new Error(`${argv[0]} failed: ${error.stdout || error.message}`); }
@@ -33,7 +32,8 @@ page.on('pageerror', (error) => errors.push(error.message));
 let resourceRoot;
 const scoped = async (receipt, suffix, body) => {
   const h = JSON.parse(fs.readFileSync(receipt.handle));
-  const response = await fetch(base + `/api/requests/${h.id}${suffix}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${h.requestToken}`, 'X-Handover-Source': h.source.session, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  assert.equal(h.schema, 2); assert.equal(h.username, 'Xpy'); assert.equal(h.requestToken, undefined);
+  const response = await fetch(base + `/api/requests/${h.id}${suffix}`, { method: body ? 'POST' : 'GET', headers: { 'X-Handover-Username': h.username, 'X-Handover-Source': h.source.session, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   assert.ok(response.ok); return response.json();
 };
 const fit = async () => {
@@ -79,10 +79,10 @@ try {
   const vmRegression=await exec(process.execPath,[path.join(root,'.agents/skills/mida-resource-packaging/scripts/test_review_ui.cjs'),resourceFixture.manifest]);assert.match(vmRegression.stdout,/PASS/);
   const resourceReceipt = await run(['publish', '--manifest', resourceFixture.manifest, '--html', resourceFixture.html, '--client', cli, '--no-open'], environment, resourceRoot);
   assert.equal(resourceReceipt.transport, 'remote'); receipts.push({ ...resourceReceipt, resource: true });
-  await page.goto(base);
-  await page.locator('#login-code').fill(adminToken); await page.locator('#login-form button').click();
   for (const [index, receipt] of receipts.entries()) {
-    await page.goto(base + new URL(receipt.url).pathname);
+    assert.equal(new URL(receipt.url).searchParams.get('username'), 'Xpy');
+    const target = new URL(receipt.url);
+    await page.goto(base + target.pathname + target.search);
     const frame = page.frameLocator('#page');
     if (receipt.resource) {
       await frame.locator('input[value="keep"]').first().waitFor();
@@ -96,16 +96,17 @@ try {
     const isolated = await frame.locator('body').evaluate(() => { try { return document.cookie; } catch (error) { return error.name; } });
     assert.equal(isolated, 'SecurityError');
     const send = receipt.resource ? frame.locator('#send-remote') : frame.locator('#remote');
-    if (index === 0) await page.route('**/feedback', (route) => route.abort());
+    if (index === 0) await page.route('**/feedback?username=Xpy', (route) => route.abort());
     await send.click();
     if (index === 0) {
       await page.locator('#retry').waitFor({ state: 'visible' });
       assert.equal((await scoped(receipt, '/wait?timeout=0')).events.length, 0);
-      await page.unroute('**/feedback'); await page.locator('#retry').click();
+      await page.unroute('**/feedback?username=Xpy'); await page.locator('#retry').click();
     }
     await page.waitForFunction(() => document.querySelector('#status').textContent.includes('等待来源'));
     const before = await scoped(receipt, '/wait?timeout=0');
     assert.equal(before.events.length, 1); assert.equal(before.handled, 0);
+    assert.equal(before.username, 'Xpy'); assert.equal(before.events[0].username, 'Xpy');
     const collected = await run(['collect', '--receipt', receipt.receipt, '--out', path.join(receipt.resource ? resourceRoot : output, 'TestTemp/SegmentFlow/received-' + index), '--timeout', '0'], environment, receipt.resource ? resourceRoot : root);
     assert.equal(collected.ackRequired, true); assert.equal(collected.received.length, 1);
     const returned = JSON.parse(fs.readFileSync(collected.received[0].json));
@@ -120,7 +121,7 @@ try {
       assert.equal(new URL(page.url()).pathname, `/grill/${receipt.requestId}/`);
     } else {
       await page.reload(); await page.frameLocator('#page').locator('body').waitFor();
-      await scoped(receipt, '/ack', { seq: 1 }); await page.waitForURL(base + '/');
+      await scoped(receipt, '/ack', { seq: 1 }); await page.waitForURL(base + '/?username=Xpy');
     }
   }
   // Offline pages retain the same JSON export contract with no remote SDK.
@@ -133,8 +134,11 @@ try {
   await download.saveAs(destination);
   assert.equal((await run(['validate', '--manifest', receipts[0].generated.manifest, '--decisions', destination])).selectionValid, true);
   await localPage.close();
+  assert.equal((await context.cookies()).length, 0, '用户名页面不需要登录或 Cookie');
+  assert.equal(Object.keys(app.store.all('tickets')).length, 0);
+  assert.equal(Object.keys(app.store.all('sessions')).length, 0);
   assert.deepEqual(errors, []);
-  console.log('PASS: 三份 Skill 自有页面、能力缺失回退、离线 JSON、隔离、重试幂等、真实类型回传、手动确认及新草稿保护');
+  console.log('PASS: 三份 Skill 按用户名免密直达、自有页面、能力缺失回退、离线 JSON、隔离、重试幂等、原样回传、手动确认及新草稿保护，无 token、登录票据或 Cookie');
 } finally {
   await browser.close(); app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve));
   fs.rmSync(dir, { recursive: true, force: true });
