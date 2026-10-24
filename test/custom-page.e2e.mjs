@@ -28,6 +28,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_PKG || 'playwright');
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
 const page = await context.newPage(), errors = [];
+let downloads = 0;
+page.on('download', () => downloads++);
 page.on('pageerror', (error) => errors.push(error.message));
 let resourceRoot;
 const scoped = async (receipt, suffix, body) => {
@@ -100,13 +102,12 @@ try {
       await frame.getByRole('textbox', { name: '自定义 JSON' }).fill('{"custom":[1,2],"fixture":true}');
     }
     await fit();
-    const exportPromise = page.waitForEvent('download', { timeout: 5000 });
     await frame.locator('#export').click();
-    const remoteExport = await exportPromise, exportedPath = path.join(receipt.resource ? resourceRoot : output, 'TestTemp/SegmentFlow', `remote-feedback-${index}.json`);
-    await remoteExport.saveAs(exportedPath);
-    assert.equal((await run(['validate', '--manifest', receipt.manifest, '--decisions', exportedPath], environment, receipt.resource ? resourceRoot : root)).selectionValid, true);
     await frame.locator('#export-json').waitFor({ timeout: 2000 });
-    assert.deepEqual(JSON.parse(await frame.locator('#export-json').inputValue()), JSON.parse(fs.readFileSync(exportedPath)));
+    const exportedPath = path.join(receipt.resource ? resourceRoot : output, 'TestTemp/SegmentFlow', `remote-feedback-${index}.json`);
+    fs.mkdirSync(path.dirname(exportedPath), {recursive:true});
+    fs.writeFileSync(exportedPath, await frame.locator('#export-json').inputValue());
+    assert.equal((await run(['validate', '--manifest', receipt.manifest, '--decisions', exportedPath], environment, receipt.resource ? resourceRoot : root)).selectionValid, true);
     // Clipboard branches use a local stub so this test never overwrites the user's clipboard.
     await frame.locator('body').evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text) => { window.isolatedCopiedJSON = text; } } }));
     await frame.locator('#copy-json').click();
@@ -149,12 +150,13 @@ try {
   }
   // Offline pages retain the same JSON export contract with no remote SDK.
   const localPage = await context.newPage();
+  localPage.on('download', () => downloads++);
   await localPage.goto('file://' + receipts[0].generated.html);
   await localPage.locator('select').selectOption('defer');
   assert.equal(await localPage.locator('#remote').isVisible(), false);
-  const downloadPromise = localPage.waitForEvent('download'); await localPage.locator('#export').click();
-  const download = await downloadPromise, destination = path.join(output, 'offline-feedback.json');
-  await download.saveAs(destination);
+  await localPage.locator('#export').click();
+  const destination = path.join(output, 'offline-feedback.json');
+  fs.writeFileSync(destination, await localPage.locator('#export-json').inputValue());
   assert.equal((await run(['validate', '--manifest', receipts[0].generated.manifest, '--decisions', destination])).selectionValid, true);
   await localPage.close();
   await scoped(receipts[1], '/cancel', {});
@@ -164,8 +166,9 @@ try {
   assert.equal((await context.cookies()).length, 0, '用户名页面不需要登录或 Cookie');
   assert.equal(Object.keys(app.store.all('tickets')).length, 0);
   assert.equal(Object.keys(app.store.all('sessions')).length, 0);
+  assert.equal(downloads, 0, '复制 JSON 不触发文件下载');
   assert.deepEqual(errors, []);
-  console.log('PASS: 三份 Skill 用户名直达、自有页面、真实 JSON 文件下载及内容一致性、复制与拒绝分支（隔离替身）、离线回退、隔离、重试幂等、原样回传、手动确认及新草稿保护，无 token、登录票据或 Cookie');
+  console.log('PASS: 三份 Skill 用户名直达、自有页面、JSON 复制与拒绝分支（隔离替身）、无文件下载、离线回退、取消状态、隔离、重试幂等、原样回传、手动确认及新草稿保护，无 token、登录票据或 Cookie');
 } finally {
   await browser.close(); app.server.closeAllConnections(); await new Promise((resolve) => app.server.close(resolve));
   fs.rmSync(dir, { recursive: true, force: true });
