@@ -65,7 +65,7 @@ test('legacy requests and owner privileges remain private even with public mode 
  assert.equal((await f.call('/api/requests/'+old.id,{cookie})).status,404);
  assert.equal((await f.call('/grill/'+old.id+'/state',{cookie})).status,404);
  assert.equal((await f.call('/api/requests',{data:{...old,username:'Xpy'}})).status,404);
- for(const route of ['/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/subscriptions','/api/logout','/api/login','/api/login/ticket']){
+ for(const route of ['/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/logout','/api/login','/api/login/ticket']){
   const res=await f.call(route,{cookie,key:agentToken,data:{token:adminToken,requestId:old.id}});assert.equal(res.status,403,route);assert.equal(res.headers.get('set-cookie'),null);
  }
  assert.equal((await f.call('/api/requests/'+old.id,{username:null,key:old.requestToken})).status,200);

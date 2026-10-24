@@ -10,7 +10,7 @@
 - `HANDOVER_HOST`、`HANDOVER_PORT`：内部应用监听地址及端口，默认回环 8025。
 - `HANDOVER_ADMIN_TOKEN`：仍必需的独立随机管理凭据（至少 32 字符）。
 - `HANDOVER_AGENT_TOKEN`：可选的旧版 Agent 随机凭据；填写时至少 32 字符且不同于管理凭据。用户名模式不需要它，部署保留现有值兼容旧请求。
-- 客户端 `HANDOVER_USERNAME=Xpy` 或配置 `username` 显式使用公开用户名模式；用户名区分大小写，仅为路由分类，不是认证。知道用户名的人可以读取和操作该用户名的新请求。旧记录不迁移、不公开；用户名模式不能取得 owner 登录票据、固定登录码或管理权限，不发送旧版 Web Push 通知。
+- 客户端 `HANDOVER_USERNAME=Xpy` 或配置 `username` 显式使用公开用户名模式；用户名区分大小写，仅为路由分类，不是认证。知道用户名的人可以读取和操作该用户名的新请求。旧记录不迁移、不公开；用户名模式不能取得 owner 登录票据、固定登录码或管理权限，通知仅向主动绑定同名的设备发送，不混入旧私有订阅。复用现有 VAPID 身份，不新增或轮换应用凭据。
 - `HANDOVER_LOGIN_CODE`：本人固定登录码，长期有效、不自动轮换。
 - `HANDOVER_VAPID_PUBLIC_KEY`、`HANDOVER_VAPID_PRIVATE_KEY`、`HANDOVER_VAPID_SUBJECT`：沿用现有推送身份，公私钥必须成对设置。
 - `HANDOVER_DATA_DIR`：独立于 release 的持久数据目录。
