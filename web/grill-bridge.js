@@ -39,6 +39,12 @@ function handoverSubmissionReceived(result, actions) {
 }
 function handoverReturnWhenAcknowledged(state) {
   if (!handoverSessionActive()) return;
+  if (state?.cancellation) {
+    const receipt = document.getElementById('handover-receipt'), cancel = document.getElementById('handover-cancel');
+    if (cancel) cancel.disabled = true;
+    if (receipt) { receipt.hidden = false; receipt.textContent = '本次回答已取消；保留已有内容，不会当作同意继续。'; }
+    return;
+  }
   const key = 'handover:return:' + handoverScope;
   const seq = Number(sessionStorage.getItem(key));
   if (!seq || (state?.agent?.handled || 0) < seq) return;
@@ -52,6 +58,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const home = document.querySelector('.home-link'); if (home) home.href = handoverHome;
   const receipt = document.createElement('span'); receipt.id = 'handover-receipt'; receipt.hidden = true; receipt.setAttribute('role', 'status');
   document.querySelector('header').append(receipt);
+  const cancel = document.createElement('button'); cancel.id = 'handover-cancel'; cancel.type = 'button'; cancel.className = 'handover-size'; cancel.textContent = '取消本次回答';
+  cancel.onclick = async () => {
+    if (!handoverSessionActive() || !window.confirm('取消本次回答？来源 Agent 会停止等待，已填写的内容会保留。')) return;
+    cancel.disabled = true;
+    try {
+      const response = await fetch(withToken('/cancel'), {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || '取消失败');
+      handoverReturnWhenAcknowledged({cancellation:result.cancellation});
+    } catch (error) { cancel.disabled = false; receipt.hidden = false; receipt.textContent = error.message; }
+  };
+  document.querySelector('header').append(cancel);
+  if (S?.finished) cancel.disabled = true;
+  handoverReturnWhenAcknowledged(S);
   if (sessionStorage.getItem('handover:return:' + handoverScope)) {
     receipt.hidden = false; receipt.textContent = '答复已保存，等待来源 Agent 确认；收到后自动返回主界面。';
   }

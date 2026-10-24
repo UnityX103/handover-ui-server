@@ -14,7 +14,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kinds = ['questionnaire', 'feedback', 'help'];
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const text = (v, max = 4000) => typeof v === 'string' && v.length <= max;
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
+const publicRequest = (r) => ({ id: r.id, kind: r.kind, topic: r.state.topic, source: r.source, ...(r.accessMode === 'username' ? { accessMode: r.accessMode, username: r.username } : {}), created: r.created, updated: r.updated, status: r.status, ...(r.cancellation ? {cancellation:r.cancellation} : {}), lastSeq: r.events.length, handled: r.state.agent.handled || 0, page: pageInfo(r) });
 
 function actionsValid(actions, state) {
   if (!Array.isArray(actions) || !actions.length || actions.length > 100) fail(400, 'actions 应为 1–100 个操作');
@@ -168,6 +168,7 @@ export function createHandoverServer(options = {}) {
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); handoverSubmissionReceived(j, actions);');
     html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  handoverReturnWhenAcknowledged(S);');
+    html = html.replace('if (S && S.finished) { b.className', 'if (S && S.cancellation) { b.className = "show done"; b.textContent = "本次回答已取消；保留已有内容，不代表同意继续或已写入设计文档。"; return; }\n  if (S && S.finished) { b.className');
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
     if (usernameRecord(r)) {
@@ -202,7 +203,7 @@ export function createHandoverServer(options = {}) {
     const refresh = () => listenerTimes.set(r.id, Date.now()); refresh();
     const reply = () => {
       const current = store.get(r.id);
-      return { ok: true, requestId: r.id, source: r.source, ...(usernameRecord(r) ? {username:r.username,accessMode:'username'} : {}), status: current.status, events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
+      return { ok: true, requestId: r.id, source: r.source, ...(usernameRecord(r) ? {username:r.username,accessMode:'username'} : {}), status: current.status, ...(current.cancellation ? {cancellation:current.cancellation} : {}), events: current.events.filter((e) => e.seq > after), cursor: after, handled: current.state.agent.handled || 0 };
     };
     let result = reply();
     if (result.events.length || ['completed', 'cancelled'].includes(result.status) || !timeout) return json(res, 200, result);
@@ -215,6 +216,12 @@ export function createHandoverServer(options = {}) {
     refresh(); if (!res.destroyed) json(res, 200, reply());
   };
 
+  const cancelRequest = (r, by) => {
+    if (r.status === 'cancelled') return r;
+    if (r.state.finished || r.status === 'completed') fail(409, '请求已结束');
+    r.status = 'cancelled'; r.updated = now(); r.cancellation = {by, at:r.updated};
+    r.state.finished = {at:r.updated, doc:''}; store.put(r); emit(r); return r;
+  };
   server = http.createServer(async (req, res) => {
     try {
       const allowedHosts = [publicUrl.host, new URL(actualOrigin()).host];
@@ -316,13 +323,13 @@ export function createHandoverServer(options = {}) {
           if (!Number.isInteger(data.seq) || data.seq < handled || data.seq > r.events.length) fail(400, '确认序号超出范围');
           r.state.agent.handled = data.seq; r.updated = now(); r.status = r.status === 'cancelled' ? 'cancelled' : (r.state.finished ? 'completed' : (r.events.length > data.seq ? 'submitted' : 'waiting')); store.put(r); return json(res, 200, { ok: true, handled: data.seq });
         }
-        if (req.method === 'POST' && operation === 'cancel') { r.status = 'cancelled'; r.updated = now(); r.state.finished = { at: now(), doc: '' }; store.put(r); emit(r); return json(res, 200, { ok: true }); }
+        if (req.method === 'POST' && operation === 'cancel') return json(res, 200, {ok:true, ...publicRequest(cancelRequest(r, 'agent'))});
         if (req.method === 'PUT' && operation === 'visual') {
           const data = await body(req); if (!text(data.html, 800000)) fail(400, '图解 HTML 过大');
           atomic(store.dir('visuals', `${r.id}.json`), { html: data.html }); return json(res, 200, { ok: true });
         }
       }
-      const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback)?$/);
+      const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback|cancel)?$/);
       if (grill) {
         if (!username(req) && !owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?mode=legacy&request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
         let r = store.get(grill[1]); requireRequestUser(req, r);
@@ -343,7 +350,11 @@ export function createHandoverServer(options = {}) {
           r.events.push(event); r.updated = now(); r.status = 'submitted'; store.put(r); emit(r);
           return json(res, 200, { ok: true, seq: event.seq, saved: true, handled: false });
         }
-        if (req.method === 'GET' && grill[2] === 'state') return json(res, 200, r.state);
+        if (req.method === 'POST' && grill[2] === 'cancel') {
+          await body(req); r = store.get(grill[1]); requireRequestUser(req, r);
+          return json(res, 200, {ok:true, ...publicRequest(cancelRequest(r, 'user'))});
+        }
+        if (req.method === 'GET' && grill[2] === 'state') return json(res, 200, {...r.state, ...(r.cancellation ? {cancellation:r.cancellation} : {})});
         if (req.method === 'GET' && grill[2] === 'listener') return json(res, 200, { listening: Date.now() - (listenerTimes.get(r.id) || 0) <= 45000, pending: r.events.length - (r.state.agent.handled || 0), handled: r.state.agent.handled || 0 });
         if (req.method === 'GET' && grill[2] === 'visual') {
           const data = store.all(`visuals/${r.id}`); if (!data.html) fail(404, '暂无图解');

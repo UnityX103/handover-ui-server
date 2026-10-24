@@ -157,6 +157,10 @@ try {
   await download.saveAs(destination);
   assert.equal((await run(['validate', '--manifest', receipts[0].generated.manifest, '--decisions', destination])).selectionValid, true);
   await localPage.close();
+  await scoped(receipts[1], '/cancel', {});
+  const cancelledCollection = await run(['collect', '--receipt', receipts[1].receipt, '--out', path.join(output, 'cancelled-received'), '--timeout', '0']);
+  assert.equal(cancelledCollection.status, 'cancelled');
+  assert.equal(cancelledCollection.ackRequired, false); assert.deepEqual(cancelledCollection.received, []);
   assert.equal((await context.cookies()).length, 0, '用户名页面不需要登录或 Cookie');
   assert.equal(Object.keys(app.store.all('tickets')).length, 0);
   assert.equal(Object.keys(app.store.all('sessions')).length, 0);

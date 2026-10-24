@@ -87,7 +87,7 @@ test('question return state is scoped by username', () => {
 test('custom page scopes metadata, iframe, persisted replies and return URL', async () => {
   const calls = [], destinations = [], storage = new Map();
   const nodes = new Map();
-  for (const selector of ['meta[name="handover-request"]','#page','#status','#retry','#title','header a']) nodes.set(selector,{content:'test-request',addEventListener(){},contentWindow:{postMessage(){}}});
+  for (const selector of ['meta[name="handover-request"]','#page','#status','#retry','#cancel-request','#title','header a']) nodes.set(selector,{content:'test-request',addEventListener(){},contentWindow:{postMessage(){}}});
   const sandbox = {
     document:{querySelector:(selector)=>nodes.get(selector)},location:{search:'?username=Xpy',replace:(url)=>destinations.push(url)},URLSearchParams,
     sessionStorage:{getItem:()=> 'Xpy'},crypto:{randomUUID:()=> 'isolated-channel'},localStorage:{getItem:(key)=>storage.get(key),setItem:(key,value)=>storage.set(key,value),removeItem:(key)=>storage.delete(key)},window:{addEventListener(){}},setTimeout(){},

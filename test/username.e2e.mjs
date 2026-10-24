@@ -40,9 +40,26 @@ try {
  await page.frameLocator('#page').locator('body[data-saved="yes"]').waitFor();await fit();
  const customEvents=await api(`/api/requests/${custom.id}/wait?timeout=0`);assert.deepEqual(customEvents.events[0].payload,{synthetic:true});assert.equal(customEvents.events[0].username,'Xpy');
  await api(`/api/requests/${custom.id}/ack`,{seq:1});await page.waitForURL(base+'/?username=Xpy');
+ const cancelledQuestion=request();await api('/api/requests',cancelledQuestion);
+ await page.goto(base+`/grill/${cancelledQuestion.id}/?username=Xpy`);
+ await page.locator('#free').fill('Synthetic draft to preserve');
+ page.once('dialog',dialog=>dialog.accept());await page.locator('#handover-cancel').click();
+ await page.waitForFunction(()=>document.querySelector('#handover-receipt').textContent.includes('已取消'));
+ const questionCancellation=await api(`/api/requests/${cancelledQuestion.id}/wait?timeout=0`);
+ assert.equal(questionCancellation.status,'cancelled');assert.equal(questionCancellation.cancellation.by,'user');assert.deepEqual(questionCancellation.events,[]);await fit();
+ const cancelledPage=request({page:{...custom.page,documentId:'synthetic-cancel-document',html:'<textarea id="draft"></textarea><button id="send">Send</button><script>document.querySelector("button").onclick=()=>HandoverBridge.submit({synthetic:true}).catch(error=>document.body.dataset.error=error.message)</script>'}});
+ await api('/api/requests',cancelledPage);await page.goto(base+`/grill/${cancelledPage.id}/?username=Xpy`);
+ await page.frameLocator('#page').locator('#draft').fill('Synthetic custom draft');
+ page.once('dialog',dialog=>dialog.accept());await page.locator('#cancel-request').click();
+ await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('已取消'));
+ assert.equal(await page.frameLocator('#page').locator('#draft').inputValue(),'Synthetic custom draft');
+ await page.frameLocator('#page').locator('#send').click();await page.frameLocator('#page').locator('body[data-error]').waitFor();
+ const customCancellation=await api(`/api/requests/${cancelledPage.id}/wait?timeout=0`);
+ assert.equal(customCancellation.status,'cancelled');assert.deepEqual(customCancellation.events,[]);await fit();
+ await page.goto(base+'/?username=Xpy');
  assert.equal((await context.cookies()).length,0,'public browser must receive no owner cookie');
  assert.ok(!urls.some((url)=>/^\/api\/(login|browser-tickets|subscriptions|pairing-tickets)/.test(url)),JSON.stringify(urls));
  await page.reload();assert.equal(await page.locator('#username-panel').isVisible(),false);
  await page.locator('#username-logout').click();await page.waitForURL(base+'/');assert.equal(await page.locator('#username').inputValue(),'');
- assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question answer/ack scoped return, custom JSON bridge, no owner routes/cookie');
+ assert.deepEqual(errors,[]);console.log('PASS: username mobile inbox, isolation, question answer/ack scoped return, custom JSON bridge, questionnaire/custom web cancellation, retained draft, no owner routes/cookie');
 } finally {await browser.close();app.server.closeAllConnections();await new Promise((resolve)=>app.server.close(resolve));fs.rmSync(dir,{recursive:true,force:true});}

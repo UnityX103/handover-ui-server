@@ -69,4 +69,14 @@ node "$SKILL/scripts/handover.mjs" finish --handle /absolute/path/handle.json
 
 同一服务器可以同时存在多个会话和请求。不得使用其他会话的 handle、共享游标或把答复转交最近打开的会话。需要反馈、求助或执行交接时使用 sibling `remote-handover` Skill。
 
+## 本地作答与取消
+
+来源 Agent 可以撤回自己发起且已不再需要等待的请求，无需另问取消许可。本人在当前聊天作答，或同一问题的群消息答复已通过明确、可信的来源传回当前会话时，先记录真实答复、来源和对应问题，必要时 `patch` 写回答案；再运行 `cancel --handle <原handle>` 取消远端待答事项，继续已经获准的工作。不从尚未取得的群消息推断答复，不替其他来源会话取消，也不为此自动接入或发送群消息。
+
+网页的“取消本次回答”同样会通知来源 Agent。`wait` 返回 `status:"cancelled"` 时停止该请求的等待，即使没有事件；取消不是答案，不代表同意执行。保留 handle、已有事件与草稿，未处理事件不自动 ack。发送取消结果未知时用同一 handle 的 `state` 核对后再处理；不重复创建。取消前后到达的远端答复按原始事件核对，不能跳过或伪造消费；必要决定仍未回答时保留阻碍。
+
+```sh
+node "$SKILL/scripts/handover.mjs" cancel --handle /absolute/path/handle.json
+```
+
 界面里的可视化请求仅在用户明确提出时处理；是否委派子 Agent 继续遵循用户已有授权，不因上游 UI 字段自动取得委派权限。
