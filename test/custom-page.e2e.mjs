@@ -83,6 +83,13 @@ try {
     assert.equal(new URL(receipt.url).searchParams.get('username'), 'Xpy');
     const target = new URL(receipt.url);
     await page.goto(base + target.pathname + target.search);
+    if (index === 0) {
+      await page.locator('#username').waitFor();
+      assert.equal(await page.locator('#username').inputValue(), '');
+      await page.locator('#username').fill('Xpy');
+      await page.locator('#username-form button[type="submit"]').click();
+      await page.waitForURL(base + target.pathname + target.search);
+    }
     const frame = page.frameLocator('#page');
     if (receipt.resource) {
       await frame.locator('input[value="keep"]').first().waitFor();

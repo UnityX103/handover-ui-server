@@ -162,15 +162,19 @@ export function createHandoverServer(options = {}) {
   const page = (r) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');
-    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
+    html = html.replace('const withToken = (p) =>', `const withToken = (input) => { const p = ${JSON.stringify(`/grill/${r.id}`)} + input; const name = new URLSearchParams(location.search).get('username'); if(name && sessionStorage.getItem('handover:username') !== name) throw new Error('请先登录对应用户名'); if(name) return p + (p.includes('?') ? '&' : '?') + 'username=' + encodeURIComponent(name); return`)
       .replace('encodeURIComponent(LAN_TOKEN) : p;', 'encodeURIComponent(LAN_TOKEN) : p; };');
     html = html.replace('JSON.stringify({ actions })', 'JSON.stringify({ actions, submissionId: handoverSubmissionId(actions) })');
     html = html.replace('j = await r.json().catch(() => ({}));', 'j = await r.json().catch(() => ({})); handoverSubmissionReceived(j, actions);');
     html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  handoverReturnWhenAcknowledged(S);');
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
     html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
+    if (usernameRecord(r)) {
+      const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = sessionStorage.getItem('handover:username'); } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify('/?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
+      html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
+    }
     html = html.replace('</head>', '<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="stylesheet" href="/grill.css"><script src="/navigation.js" defer></script><meta name="theme-color" content="#264e45"></head>');
-    html = html.replace('<header>', '<header><a class="home-link" href="' + (usernameRecord(r) ? '/?username=' + encodeURIComponent(r.username) : '/') + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
+    html = html.replace('<header>', '<header><a class="home-link" href="' + (usernameRecord(r) ? '/?username=' + encodeURIComponent(r.username) : '/?mode=legacy') + '">← 全部请求</a><span class="request-kind">' + {questionnaire:'问卷',feedback:'反馈',help:'求助'}[r.kind] + '</span>');
     html = html.replace('<button class="primary" id="send" type="button" disabled>Send to Agent</button>', '<button class="primary" id="send" type="button" disabled>发送给 Agent</button>');
     html = html.replace('<input type="checkbox" id="use-subagent" checked>', '<input type="checkbox" id="use-subagent">').replace('subagent: true', 'subagent: false');
     const labels = [
@@ -236,7 +240,7 @@ export function createHandoverServer(options = {}) {
         if (!agent(req)) fail(403, 'Agent 凭据无效');
         const data = await body(req); if (data.requestId && (!validId(data.requestId) || !store.get(data.requestId))) fail(404, '请求不存在');
         const value = makeTicket('browser', data.requestId || '');
-        return json(res, 201, { ok: true, loginUrl: `${publicUrl.origin}/#ticket=${value}` });
+        return json(res, 201, { ok: true, loginUrl: `${publicUrl.origin}/?mode=legacy#ticket=${value}` });
       }
       if (req.method === 'GET' && p === '/api/me' && username(req)) return json(res, 200, { mode: 'username', username: username(req), authenticated: false, version });
       if (req.method === 'GET' && p === '/api/me') return json(res, 200, { authenticated: !!owner(req), vapidPublicKey: owner(req) ? vapid.publicKey : undefined, version });
@@ -312,7 +316,7 @@ export function createHandoverServer(options = {}) {
       }
       const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback)?$/);
       if (grill) {
-        if (!username(req) && !owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
+        if (!username(req) && !owner(req)) { if (!grill[2] && req.method === 'GET') { res.writeHead(302, { Location: `/?mode=legacy&request=${grill[1]}`, 'Cache-Control': 'no-store' }); return res.end(); } fail(401, '请先登录'); }
         let r = store.get(grill[1]); requireRequestUser(req, r);
         if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id) : page(r), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }

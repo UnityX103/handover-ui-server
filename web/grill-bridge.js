@@ -1,8 +1,17 @@
+function handoverRequireUsername() {
+  const target = new URLSearchParams(location.search).get('username');
+  if (target === null) return;
+  let current; try { current = sessionStorage.getItem('handover:username'); } catch {}
+  if (current !== target) { location.replace('/?' + new URLSearchParams({username:target,request:location.pathname.split('/')[2]})); throw new Error('请先登录匹配的用户名'); }
+}
+handoverRequireUsername();
 const handoverUsername = new URLSearchParams(location.search).get('username');
 const handoverScope = location.pathname + (handoverUsername === null ? '' : '?' + new URLSearchParams({username:handoverUsername}));
-const handoverHome = handoverUsername === null ? '/' : '/?' + new URLSearchParams({username:handoverUsername});
+const handoverHome = handoverUsername === null ? '/?mode=legacy' : '/?' + new URLSearchParams({username:handoverUsername});
+const handoverSessionActive = () => { if (handoverUsername === null) return true; try { return sessionStorage.getItem('handover:username') === handoverUsername; } catch { return false; } };
 // Included inside the upstream page's script; each send keeps its identity on retry.
 function handoverSubmissionId(actions) {
+  if (!handoverSessionActive()) throw new Error('用户名会话已退出');
   const key = 'handover:submission:' + handoverScope;
   const digest = JSON.stringify(actions);
   let saved;
@@ -14,6 +23,7 @@ function handoverSubmissionId(actions) {
   return saved.id;
 }
 function handoverSubmissionReceived(result, actions) {
+  if (!handoverSessionActive()) return;
   if (!result?.ok || !result.seq) return;
   const key = 'handover:submission:' + handoverScope;
   try {
@@ -28,6 +38,7 @@ function handoverSubmissionReceived(result, actions) {
   }
 }
 function handoverReturnWhenAcknowledged(state) {
+  if (!handoverSessionActive()) return;
   const key = 'handover:return:' + handoverScope;
   const seq = Number(sessionStorage.getItem(key));
   if (!seq || (state?.agent?.handled || 0) < seq) return;
