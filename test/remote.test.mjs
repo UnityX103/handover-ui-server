@@ -185,14 +185,23 @@ test('客户端使用前检查并更新 Skill，新版继续同次创建且恢�
   const files=Object.fromEntries(manifest.files.map((file)=>[file,fs.readFileSync(file,'utf8')]));
   const snapshot=path.join(f.dir,'github-fixture.json'),calls=path.join(f.dir,'github-calls.jsonl'),version='c'.repeat(40);
   fs.writeFileSync(snapshot,JSON.stringify({manifest,files,version}));
-  fs.writeFileSync(path.join(bin,'gh'),`#!/usr/bin/env node
+  fs.writeFileSync(path.join(bin,'git'),`#!/usr/bin/env node
 import fs from 'node:fs';
-const fixture=JSON.parse(fs.readFileSync(process.env.HANDOVER_TEST_GITHUB_FIXTURE,'utf8'));
-const args=process.argv.slice(2);fs.appendFileSync(process.env.HANDOVER_TEST_GITHUB_CALLS,JSON.stringify(args)+'\\n');
-if(args[1].endsWith('/commits/main'))process.stdout.write(fixture.version+'\\n');
-else {const target=new URL('https://api.github.com/'+args.at(-1));if(target.searchParams.get('ref')!==fixture.version)process.exit(1);const file=target.pathname.split('/contents/')[1];process.stdout.write(file==='skills/manifest.json'?JSON.stringify(fixture.manifest):fixture.files[file]);}
+const fixture=JSON.parse(fs.readFileSync(${JSON.stringify(snapshot)},'utf8'));
+const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');
+if(args.slice(-3).join(' ')!=='ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main')process.exit(1);
+process.stdout.write(fixture.version+'\\trefs/heads/main\\n');
 `,{mode:0o700});
-  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:'Xpy',HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',HANDOVER_TEST_GITHUB_FIXTURE:snapshot,HANDOVER_TEST_GITHUB_CALLS:calls};
+  const preload=path.join(f.dir,'public-fetch-fixture.mjs');
+  fs.writeFileSync(preload,`import fs from 'node:fs';
+const fixture=JSON.parse(fs.readFileSync(${JSON.stringify(snapshot)},'utf8')),originalFetch=globalThis.fetch;
+globalThis.fetch=async (url,options)=>{if(!String(url).startsWith('https://raw.githubusercontent.com/'))return originalFetch(url,options);
+const target=new URL(url),prefix='/UnityX103/handover-ui-server/'+fixture.version+'/';if(!target.pathname.startsWith(prefix))throw new Error('unpinned fixture');
+if(options.credentials!=='omit'||options.redirect!=='error'||options.headers.Authorization)throw new Error('unexpected credential');
+const file=decodeURIComponent(target.pathname.slice(prefix.length));fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify([file])+'\\n');
+return new Response(file==='skills/manifest.json'?JSON.stringify(fixture.manifest):fixture.files[file]);};
+`);
+  const env={...process.env,PATH:bin+path.delimiter+process.env.PATH,CODEX_THREAD_ID:'update-source-fixture',HANDOVER_SERVER_URL:f.url,HANDOVER_AGENT_TOKEN:agentToken,HANDOVER_USERNAME:'Xpy',HANDOVER_CONFIG:path.join(f.dir,'absent-config.json'),HANDOVER_STATE_DIR:state,HANDOVER_SKILLS_DIR:skills,HANDOVER_SKILL_BACKUP_DIR:path.join(f.dir,'backups'),HANDOVER_NO_OPEN:'1',HANDOVER_SKIP_UPDATE:'',HANDOVER_UPDATE_CHECKED:'',NODE_OPTIONS:'--import='+preload};
   const cli=path.resolve('skills/grill-with-ui/scripts/handover.mjs');
   const created=await exec(process.execPath,[cli,'new','--kind','help','--topic','更新后创建隔离请求','--no-open'],{env});
   const result=JSON.parse(created.stdout);

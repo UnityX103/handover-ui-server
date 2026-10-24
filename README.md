@@ -46,7 +46,7 @@ npm run install:skills
 
 安装 `skills/grill-with-ui` 与 `skills/remote-handover` 到用户 Codex Skill 目录。旧版移到 `~/.local/share/handover-ui/skill-backups/<时间>/`，不再被发现为活动 Skill。已有 `grill-with-docs-ui` 会更新为组合调用新的远程入口，保留领域词汇表与 ADR 工作流。
 
-每次使用客户端 `new`、有效 schema 2 的 `resume` 或 `home` 时，先通过本机已登录的 `gh` 请求仓库 `main` 最新 SHA。有更新就从同一个确定提交下载 `skills/manifest.json` 列出的文件，备份并更新两份 Skill 和已有组合入口，再以新版客户端继续原操作；现有凭据、请求 handle 与游标保留。没有更新只发一次版本检查；当前交接的分段等待和答复确认不重复检查。检查或下载失败时保留现有版本并报告；可单独运行 `node cli.mjs update`。隔离测试使用 `HANDOVER_SKIP_UPDATE=1`。
+每次使用客户端 `new`、有效 schema 2 的 `resume` 或 `home` 时，先用本机 Git 非交互运行 `git ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main`，读取公开仓库 `main` 的完整 SHA；不需要 `gh`、GitHub 登录或访问 token。有更新就使用 Node.js 内置 `fetch` 从 `raw.githubusercontent.com/UnityX103/handover-ui-server/<完整 SHA>/` 下载清单和 `skills/manifest.json` 列出的文件，始终固定同一个提交，备份并更新两份 Skill 和已有组合入口，再以新版客户端继续原操作；现有凭据、请求 handle 与游标保留。没有更新只发一次版本检查；当前交接的分段等待和答复确认不重复检查。检查或下载失败时保留现有版本并报告；可单独运行 `node cli.mjs update`。隔离测试使用 `HANDOVER_SKIP_UPDATE=1`。本机需安装 Git 与 Node.js 22.11+，能访问 GitHub HTTPS 和 raw.githubusercontent.com；完整下载、路径校验、并发锁、备份与按目录原子重命名切换/失败恢复保持不变。该客户端公开下载流程不改变服务器 Webhook 发布链路或只读部署身份。
 
 两份 Skill 共用 `~/.config/handover-ui/config.json`（0600）：
 
@@ -143,3 +143,7 @@ MIDA_RESOURCE_PROJECT_ROOT=/absolute/path/resource-workspace npm run test:sent
 自定义 HTML 在隔离 iframe 中运行，不获得本站 Cookie、存储或网络访问能力；HTML 和反馈有大小限制。业务决定、JSON 结构校验及执行授权由来源 Skill 负责，服务不执行反馈中的命令。页面应始终保留本地导出 JSON 的能力；客户端、配置或服务器能力缺失时使用离线 HTML／JSON。创建结果未知时保留原 handle，核对同一请求，不重复创建。详细接入见 [自定义页面契约](skills/grill-with-ui/references/custom-pages.md)。
 
 三份 MIDA 项目 Skill 的隔离桥接联调可通过 `MIDA_PROJECT_ROOT` 指定项目，沿已有 Playwright 环境运行 `npm run test:bridge`。它只生成合成页面与反馈，不启动 Unity，不恢复项目测试队列。
+
+更新锁若属于已退出的进程，客户端不会自动删除它，避免并发安装覆盖。遇到 `stale-lock` 或 `recovery-needed` 时先核实没有更新进程，并检查原 Skill 与备份后人工恢复；恢复未完成时保留锁、停止自动安装，不宣称原安装已完整恢复。
+
+安装切换按各 Skill 目录分别重命名，不保证进程崩溃时多目录整体原子性；恢复失败不会伪称旧版本已完整还原。

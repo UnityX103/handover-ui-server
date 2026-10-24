@@ -25,7 +25,7 @@ description: 通过配置的远程交接服务发起 Grill 问卷，自动用默
 
 ## 使用前检查更新
 
-客户端在每次 `new`、有效 schema 2 的 `resume` 或 `home` 前先请求 GitHub，比较仓库 `UnityX103/handover-ui-server` 的 `main` 完整 SHA 与本地安装版本。存在新版本时，下载该确定提交的清单和文件，备份并更新两份远程 Skill 及已有的 `grill-with-docs-ui` 组合入口，再用新版客户端继续同一次操作。依赖本机已登录的 `gh`，凭据不经过命令参数；服务器仍通过已有 push webhook 更新。
+客户端在每次 `new`、有效 schema 2 的 `resume` 或 `home` 前先通过 Git 非交互运行 `git ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main`，比较公开仓库 `main` 完整 SHA 与本地安装版本。存在新版本时，使用 Node.js 内置 `fetch` 从 `raw.githubusercontent.com/UnityX103/handover-ui-server/<完整 SHA>/` 下载该确定提交的清单和文件，备份并更新两份远程 Skill 及已有的 `grill-with-docs-ui` 组合入口，再用新版客户端继续同一次操作。只依赖本机 Git、Node.js 22.11+ 和公开 HTTPS 访问，不需要 `gh`、GitHub 登录或访问 token，不弹出交互登录。保留清单校验、并发锁、完整下载后备份、按目录原子重命名切换与失败恢复；服务器仍通过已有 push webhook 更新，部署身份不变。
 
 更新结果写入 stderr 的 `skill_update` JSON。看到 `updated:true` 时重新读取已安装的 Skill，以新版说明继续；已经创建的请求沿用返回的 handle，不重复 `new`。网络或权限失败时说明未能完成更新，保留现有客户端、配置和请求继续；不得宣称已是最新版。单次交接的 `wait`、`patch`、`ack` 不反复检查或中途替换客户端。
 
@@ -82,3 +82,5 @@ node "$SKILL/scripts/handover.mjs" cancel --handle /absolute/path/handle.json
 ```
 
 界面里的可视化请求仅在用户明确提出时处理；是否委派子 Agent 继续遵循用户已有授权，不因上游 UI 字段自动取得委派权限。
+
+更新锁若属于已退出的进程，客户端不会自动删除它，避免并发安装覆盖。遇到 `stale-lock` 或 `recovery-needed` 时先核实没有更新进程，并检查原 Skill 与备份后人工恢复；恢复未完成时保留锁、停止自动安装，不宣称原安装已完整恢复。

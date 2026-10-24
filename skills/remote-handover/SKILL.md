@@ -7,7 +7,7 @@ description: Agent 需要本人反馈、求助、判断或人工交接时，通�
 
 使用 sibling [grill-with-ui](../grill-with-ui/SKILL.md) 的本地服务器配置、来源身份、前台等待、回执恢复和事件确认规则；先读该文件。辅助客户端为 `../grill-with-ui/scripts/handover.mjs`，需要 Node 22.11 或以上版本。
 
-每次发起或恢复交接时，共用客户端先检查 GitHub `UnityX103/handover-ui-server` 的 `main`，有新版本则备份并更新两份远程 Skill 后继续。本机需有已登录的 `gh`；检查失败时说明并保留现有版本，不重建已有请求。更新显示 `updated:true` 时重读已安装说明；完整行为见 sibling 的“使用前检查更新”。
+每次发起或恢复交接时，共用客户端先检查 GitHub `UnityX103/handover-ui-server` 的 `main`，有新版本则备份并更新两份远程 Skill 后继续。本机需有 Git 与 Node.js 22.11+：以非交互 `git ls-remote` 读取公开仓库 main 完整 SHA，再用 Node 内置 fetch 从 raw.githubusercontent.com 固定该 SHA 下载清单和文件；不需要 gh、GitHub 登录或访问 token。清单校验、并发锁、完整下载、备份、按目录原子重命名切换和失败恢复保持不变，服务器部署身份不变；检查失败时说明并保留现有版本，不重建已有请求。更新显示 `updated:true` 时重读已安装说明；完整行为见 sibling 的“使用前检查更新”。
 
 本地变量 `HANDOVER_SERVER_URL` 指定目标服务器；默认读取权限为 0600 的 `~/.config/handover-ui/config.json`。目标用户通过配置 `username` 或 `HANDOVER_USERNAME` 提供，未配置用户名时始终默认 `Xpy`，无需 Agent token。用户名只是公开分类，不是认证；任何知道用户名的人可能读取或操作其新请求，不能证明答复者身份。旧无用户名记录和 schema 1 handle 仅保留归档，不再在线访问；旧 token 被忽略，旧配置不删除。schema 2 handle 不随配置变化而改归属。
 
