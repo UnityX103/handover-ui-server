@@ -16,6 +16,8 @@ const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_C
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 const page = await context.newPage(), errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
+page.on('crash', () => console.error('remote e2e: native renderer crash'));
+browser.on('disconnected', () => console.log('remote e2e: browser disconnected'));
 const request = (kind, source) => ({ username:'Xpy', id: crypto.randomUUID(), kind, topic: '隔离浏览器测试 · ' + kind, source: { session: source, project: '/isolated/browser-test', machine: 'test' }, requestToken: crypto.randomBytes(32).toString('base64url') });
 async function api(route, data, key = agentToken, method = 'POST', source) {
   const response = await fetch(url + route, { method, headers: { 'Content-Type': 'application/json', 'X-Handover-Username':'Xpy', Authorization: 'Bearer ' + key, ...(source ? { 'X-Handover-Source': source } : {}) }, body: data ? JSON.stringify(data) : undefined });
@@ -33,9 +35,12 @@ try {
   a.questions = [{ id: 'q1', round: 1, title: '多选问题：请选择测试选项', body: '仅为测试数据，不表示人的真实决定。', multi: true, options: [{ k: 'A', text: '测试甲' }, { k: 'B', text: '测试乙' }, { k: 'C', text: '测试丙' }], rec: { options: ['A'], why: '只用于检查推荐不会自动提交' } }];
   const b = request('feedback', 'isolated-browser-source-b');
   await api('/api/requests', a); await api('/api/requests', b);
+  console.log('remote e2e: opening username login');
   await page.goto(url + '/?username=Xpy');
   await page.locator('#username').fill('Xpy');
+  console.log('remote e2e: submitting username login (service worker identity/badge path)');
   await page.locator('#username-form button').click();
+  console.log('remote e2e: waiting for initial request list');
   await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).waitFor();
   await fit('手机收件箱');
   await page.locator(`a.request[href="/grill/${a.id}/?username=Xpy"]`).click();
