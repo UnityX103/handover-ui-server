@@ -34,7 +34,9 @@ if (evidence) fs.mkdirSync(evidence, { recursive: true });
 try {
   const a = request('questionnaire', 'isolated-browser-source-a');
   a.questions = [{ id: 'q1', round: 1, title: '多选问题：请选择测试选项', body: '仅为测试数据，不表示人的真实决定。', multi: true, options: [{ k: 'A', text: '测试甲' }, { k: 'B', text: '测试乙' }, { k: 'C', text: '测试丙' }], rec: { options: ['A'], why: '只用于检查推荐不会自动提交' } }];
+  a.context = 'Synthetic request background\n' + 'Long readable context. '.repeat(24) + '<b>literal text</b>';
   const b = request('feedback', 'isolated-browser-source-b');
+  b.context = 'Independent feedback background\nKeep this full subtitle visible on desktop too.';
   await api('/api/requests', a); await api('/api/requests', b);
   console.log('remote e2e: opening username login');
   await page.goto(url + '/?username=Xpy');
@@ -55,6 +57,11 @@ try {
   await page.waitForFunction(() => document.querySelector('#free')?.value === '隔离草稿，刷新后保留');
   assert.equal(await page.locator('.opt.staged').count(), 2);
   await fit('手机问卷');
+  assert.equal(await page.locator('.handover-request-context').count(), 1);
+  assert.equal(await page.locator('.handover-request-context').textContent(), a.context);
+  assert.equal(await page.locator('.handover-request-context b').count(), 0);
+  assert.equal(await page.locator('header #intent').isVisible(), false);
+  assert.equal(await page.locator('.handover-request-context').evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
   // Phone tools are intentionally collapsed: exercise the same disclosure a person uses.
   const more = page.locator('.handover-more');
   assert.equal(await more.getAttribute('open'), null);
@@ -103,6 +110,9 @@ try {
   await page.setViewportSize({ width: 820, height: 1180 });
   await page.waitForFunction(() => document.querySelector('.handover-more')?.hidden === true);
   await fit('平板反馈');
+  assert.equal(await page.locator('.handover-request-context').textContent(), b.context);
+  assert.equal(await page.locator('header #intent').isVisible(), false);
+  assert.equal(await page.locator('.handover-request-context').evaluate(el => getComputedStyle(el).maxHeight), 'none');
   assert.equal(await page.locator('.handover-more').isVisible(), false);
   assert.equal(await page.getByRole('button', { name: '字号 +' }).isVisible(), true);
   assert.equal(await page.locator('main').evaluate((el) => getComputedStyle(el).fontSize), '22px');

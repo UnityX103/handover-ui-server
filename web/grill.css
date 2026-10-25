@@ -57,3 +57,8 @@ footer #handover-cancel{flex:0 0 100%;grid-column:1/-1;order:10;width:100%;min-h
   footer .staged-list.is-empty{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
   footer #finish-area button,footer #send,footer #handover-cancel{min-height:44px;box-sizing:border-box;padding:6px 10px;line-height:1.4}
 }
+
+/* Keep the short navigation title; show the complete request context in the body. */
+header #intent{display:none!important}
+#main .handover-request-context{display:block;max-width:680px;margin:0 0 32px;padding:4px 0 20px;font:500 var(--handover-font)/1.8 var(--sans);color:var(--ink);white-space:pre-wrap;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;max-height:none}
+@media(max-width:640px){#main .handover-request-context{max-width:none;margin-bottom:28px;padding:4px 0 16px;font-size:calc(var(--handover-font) * .9);line-height:1.8}}

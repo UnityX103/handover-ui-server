@@ -10,6 +10,23 @@ const handoverScope = location.pathname + (handoverUsername === null ? '' : '?' 
 const handoverHome = window.HandoverPaths.url(handoverUsername === null ? '/' : '/?' + new URLSearchParams({username:handoverUsername}));
 const handoverIdentityEpoch=localStorage.getItem('handover:identity-epoch')||'0';
 const handoverSessionActive = () => { if (handoverUsername === null) return true; try { return localStorage.getItem('handover:username') === handoverUsername && (localStorage.getItem('handover:identity-epoch')||'0')===handoverIdentityEpoch; } catch { return false; } };
+// Request context belongs to the readable body, not a clipped header or tool menu.
+if (typeof renderMain === 'function') {
+  const handoverOriginalRenderMain = renderMain;
+  renderMain = function(...args) {
+    const result = handoverOriginalRenderMain(...args);
+    const main = document.getElementById('main');
+    const context = typeof S?.intent === 'string' ? S.intent.trim() : '';
+    if (main && context) {
+      const subtitle = document.createElement('div');
+      subtitle.className = 'handover-request-context';
+      subtitle.setAttribute('aria-label', '请求背景');
+      subtitle.textContent = context;
+      main.prepend(subtitle);
+    }
+    return result;
+  };
+}
 // The upstream post function is hoisted; a second gesture must not start another POST.
 if (typeof post === 'function') {
   const handoverOriginalPost = post; let handoverPosting = false;
@@ -115,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const more = document.createElement('details'); more.className = 'handover-more';
   const summary = document.createElement('summary'); summary.textContent = '更多'; more.append(summary);
   const panel = document.createElement('div'); panel.className = 'handover-more-panel'; more.append(panel);
-  const controls = [...header.querySelectorAll('#terms-toggle,#visualize,#theme-toggle,#levels-toggle,.handover-size,.request-kind,#doc-path,#intent')].map(node => {
+  const controls = [...header.querySelectorAll('#terms-toggle,#visualize,#theme-toggle,#levels-toggle,.handover-size,.request-kind,#doc-path')].map(node => {
     const anchor = document.createComment('toolbar-control'); node.before(anchor); return {node,anchor};
   });
   header.append(more);

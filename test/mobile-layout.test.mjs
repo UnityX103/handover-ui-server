@@ -83,7 +83,7 @@ test('question chips support Enter and Space, restore focus after render and ign
 function toolbarFixture(initialMobile) {
   const root = new Element('html'), header = new Element('header'), footer = new Element('footer'); root.append(header, footer);
   const home = new Element('a'); home.className = 'home-link'; header.append(home);
-  const controls = ['terms-toggle', 'visualize', 'theme-toggle', 'levels-toggle', 'doc-path', 'intent'].map(id => { const node = new Element(id.includes('toggle') || id === 'visualize' ? 'button' : 'span'); node.id = id; header.append(node); return node; });
+  const controls = ['terms-toggle', 'visualize', 'theme-toggle', 'levels-toggle', 'doc-path'].map(id => { const node = new Element(id.includes('toggle') || id === 'visualize' ? 'button' : 'span'); node.id = id; header.append(node); return node; });
   const kind = new Element('span'); kind.className = 'request-kind'; header.append(kind); controls.push(kind);
   let activations = 0; controls[0].onclick = () => { activations++; };
   const values = new Map(), styles = new Map(), listeners = {};
@@ -145,4 +145,33 @@ test('navigation accessible status follows staged then pending then answered pre
   assert.match(items[1].attrs['aria-label'], /（已发送，等待回复）$/);
   assert.match(items[2].attrs['aria-label'], /（已回答）$/);
   assert.match(items[3].attrs['aria-label'], /（open）$/);
+});
+
+
+test('request context is full body text before each question, never HTML or a tool', () => {
+  const main = new Element('main'); main.prepend = node => { node.parentNode = main; main.children.unshift(node); };
+  const context = { S: { intent: '  Synthetic request context\n' + 'Detailed background. '.repeat(40) + '<img src=x onerror=alert(1)>  ' }, document: {getElementById: id => id === 'main' ? main : null, createElement: tag => new Element(tag)} };
+  let selected = 'q1', renders = 0;
+  context.renderMain = () => { renders++; main.innerHTML = ''; const card = new Element('section'); card.className = 'card'; card.textContent = selected; main.append(card); return selected; };
+  const start = bridge.indexOf('// Request context belongs');
+  const end = bridge.indexOf('// The upstream post function', start);
+  vm.runInNewContext(bridge.slice(start,end), context);
+  assert.equal(context.renderMain(), 'q1');
+  assert.equal(main.children[0].className, 'handover-request-context');
+  assert.equal(main.children[0].attrs['aria-label'], '请求背景');
+  assert.equal(main.children[0].textContent, context.S.intent.trim());
+  assert.equal(main.children[0].innerHTML, ''); // textContent, not parsed untrusted markup
+  assert.equal(main.children[1].textContent, 'q1');
+  selected = 'q2'; context.S.intent = 'Changed background\nsecond line';
+  for (let i=0;i<4;i++) context.renderMain();
+  assert.equal(main.querySelectorAll('.handover-request-context').length, 1);
+  assert.equal(main.children[0].textContent, context.S.intent);
+  assert.equal(main.children[1].textContent, 'q2');
+  for (const empty of ['', '   ', null, 42]) { context.S.intent = empty; context.renderMain(); assert.equal(main.querySelectorAll('.handover-request-context').length, 0); }
+  assert.equal(renders, 9);
+  assert.match(css, /header #intent\{display:none!important\}/);
+  assert.match(css, /white-space:pre-wrap;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;max-height:none/);
+  assert.match(css, /margin:0 0 32px;padding:4px 0 20px/);
+  assert.match(css, /@media\(max-width:640px\)\{#main \.handover-request-context/);
+  assert.doesNotMatch(bridge.match(/header\.querySelectorAll\(([^\n]+)/)[1], /#intent/);
 });
