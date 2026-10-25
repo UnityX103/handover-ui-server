@@ -10,6 +10,7 @@ import { applyPatch, validateState, validateAxesChange } from '../server.mjs';
 import { Store, atomic, hash, equal, now, validId } from './store.mjs';
 import { publicEndpoint, requestMount, shellHtml } from './public-paths.mjs';
 import {NotificationOutbox, notificationSettings, notificationDescriptor} from './notify-outbox.mjs';
+import {pushOutcome, startPushReceipt} from './push-receipts.mjs';
 import { customLimits, customPage, pageInfo, savedFeedback, validateFeedback, customCsp, customContent } from './custom-page.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -96,20 +97,27 @@ export function createHandoverServer(options = {}) {
     if (!usernameRecord(request)) return 0;
     const subscriptions = store.all('subscriptions');
     const scopedSubscriptions = Object.entries(subscriptions).filter(([, sub]) => sub.accessMode === 'username' && sub.username === request.username);
+    const receipt = startPushReceipt(store,request,scopedSubscriptions.length);
     const notice = { ...(usernameRecord(request) ? {username:request.username} : {}), title: `远程交接 · ${{questionnaire:'问卷',feedback:'反馈',help:'求助'}[request.kind]}`, body: request.state.topic.slice(0, 100), tag: request.id, requestId: request.id, updated: request.updated, userAttentionVersion: attentionVersion(request) };
     const results = await Promise.allSettled(scopedSubscriptions.map(async ([key, sub]) => {
       try {
         const send = config.sendNotification || webpush.sendNotification.bind(webpush);
         const message = JSON.stringify({ ...notice, url: `${sub.basePath || '/'}grill/${request.id}/?username=${encodeURIComponent(request.username)}` });
-        await send(sub.subscription, message, { TTL: 86400, urgency: 'high', timeout: 10000, vapidDetails: { subject: config.vapidSubject || publicUrl.origin, publicKey: vapid.publicKey, privateKey: vapid.privateKey } });
+        const response = await send(sub.subscription, message, { TTL: 86400, urgency: 'high', timeout: 10000, vapidDetails: { subject: config.vapidSubject || publicUrl.origin, publicKey: vapid.publicKey, privateKey: vapid.privateKey } });
+        return pushOutcome(response);
       } catch (e) {
-        if (e.statusCode === 404 || e.statusCode === 410) { const current = store.all('subscriptions'); if (JSON.stringify(current[key]) === JSON.stringify(sub)) { delete current[key]; store.save('subscriptions', current); } }
-        else console.error(JSON.stringify({ event: 'push_failed', requestId: request.id, status: Number(e.statusCode) || 'network' }));
+        const outcome=pushOutcome(e,true);
+        if (outcome.state==='expired') {
+          try { const current=store.all('subscriptions');if(JSON.stringify(current[key])===JSON.stringify(sub)){delete current[key];store.save('subscriptions',current);} }
+          catch {outcome.cleanupFailed=true;}
+        } else console.error(JSON.stringify({event:'push_failed',requestId:request.id,status:outcome.httpStatus||'network'}));
+        return outcome;
       }
     }));
+    receipt(results);
     return results.length;
   };
-  const notifyLater = (r) => { if (waitingFor(r) === 'user' && !config.disablePush) void notify(r).catch(() => console.error('push_dispatch_failed')); };
+  const notifyLater = (r) => { if (waitingFor(r) === 'user' && !config.disablePush) void notify(r).catch(() => console.error(JSON.stringify({event:'push_dispatch_failed',requestId:r.id}))); };
   const bytes = (res, status, content, type = 'application/json; charset=utf-8', extra = {}) => {
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN', ...extra }); res.end(content);
   };

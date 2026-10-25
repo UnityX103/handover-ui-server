@@ -161,6 +161,13 @@ test('sent/closed and empty pending list clear badge; fallback watermarks merge 
  await w.unread('sync','Xpy',{items:[{id:'request-second123',version:1,waiting:true}],localSeen:{'request-second123':1}});assert.equal(w.badges.at(-1),0);
 });
 
+test('已同步结束状态会过滤同版本迟到推送，新版本待答通知仍可显示', async () => {
+ const w=unreadWorker();await w.message({type:'handover:push-user',username:'Xpy'});
+ await w.unread('sync','Xpy',{items:[{id:'request-finished123',version:1,waiting:false}]});
+ await w.push('request-finished123',1);assert.equal(w.shown.length,0);
+ await w.push('request-finished123',2);assert.equal(w.shown.length,1);
+});
+
 test('clear includes worker-known unread items even when current page snapshot is empty', async () => {
  const w=unreadWorker();await w.unread('sync','Xpy',{items:[{id:'request-12345678',version:4,waiting:true}]});assert.equal(w.badges.at(-1),1);
  const snapshot=await w.unread('snapshot');await w.unread('clear','Xpy',{items:[],known:snapshot.known});assert.equal(w.badges.at(-1),0);
