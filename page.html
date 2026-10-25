@@ -90,6 +90,9 @@
 
   nav { grid-row: 3; grid-column: 1; border-right: 1px solid var(--rule); overflow-y: auto; padding: 10px 0 24px; }
   nav .note { margin: 6px 14px 4px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; font-size: 13px; color: var(--ink-2); }
+  .nav-progress, .nav-number { display: none; }
+  .nav-items { display: contents; }
+  #nav .item:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   nav .round { padding: 16px 20px 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: flex; justify-content: space-between; }
   nav .round.current { color: var(--accent); }
   .item { display: grid; grid-template-columns: 30px 1fr auto; gap: 0 8px; align-items: baseline; padding: 8px 20px; cursor: pointer; }
@@ -671,26 +674,36 @@ function renderNav() {
   const all = rounds();
   if (!all.length) { nav.insertAdjacentHTML("beforeend", `<div class="empty">Waiting for the first round…</div>`); return; }
   const cur = curRound();
+  const ordered = all.flatMap(([, list]) => list);
+  const progress = document.createElement("div"); progress.className = "nav-progress"; progress.setAttribute("role", "status");
+  progress.textContent = `第 ${Math.max(1, ordered.findIndex((q) => q.id === selected) + 1)} / ${ordered.length} 题 · 已答 ${ordered.filter((q) => q.status === "answered").length}`;
+  nav.appendChild(progress);
+  const items = document.createElement("div"); items.className = "nav-items"; nav.appendChild(items);
   for (const [r, list] of all) {
     const h = document.createElement("div"); h.className = "round" + (r === cur ? " current" : "");
-    h.innerHTML = `<span>Round ${r}${r === cur ? " · current" : ""}</span><span>${list.length}</span>`; nav.appendChild(h);
+    h.innerHTML = `<span>Round ${r}${r === cur ? " · current" : ""}</span><span>${list.length}</span>`; items.appendChild(h);
     for (const q of list) {
       const s = local.staged[q.id];
       const el = document.createElement("div");
       el.className = "item" + (q.id === selected ? " selected" : "") + (q.updated ? " updated" : "");
       el.dataset.q = q.id;
+      el.setAttribute("role", "button"); el.tabIndex = 0;
+      const navState = s ? "已暂存" : pendingActions(q.id).some((a) => a.type !== "explore") ? "已发送，等待回复" : q.status === "answered" ? "已回答" : q.status;
+      el.setAttribute("aria-label", `第 ${ordered.indexOf(q) + 1} 题：${q.title}（${navState}）`);
+      if (q.id === selected) el.setAttribute("aria-current", "step");
       const lv = levelOf(q);
       if (lv) el.title = LEVEL_NAMES[lv] + (q.levelReason ? " · " + q.levelReason : "");
       const word = lv === "careful" || lv === "yours" ? `<span class="sword lvc-${lv}${q.status === "answered" ? " done" : ""}">${LEVEL_NAMES[lv]}</span>` : "";
       const mark = s ? `<span class="mark staged">staged</span>`
         : pendingActions(q.id).some((a) => a.type !== "explore") ? `<span class="mark pending"><span class="spin"></span>sent</span>`
         : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc(keyLabel(q.answer) || "text") : esc(q.status)}</span>`;
-      el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}${word}`;
+      el.innerHTML = `<span class="nav-number" aria-hidden="true">${ordered.indexOf(q) + 1}</span><span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}${word}`;
       el.onclick = () => { selected = q.id; render(); };
-      nav.appendChild(el);
+      el.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); el.click(); const current = nav.querySelector(".item.selected"); if (current) current.focus({ preventScroll: true }); } };
+      items.appendChild(el);
     }
   }
-  const sel = nav.querySelector(".item.selected"); if (sel) sel.scrollIntoView({ block: "nearest" });
+  const sel = nav.querySelector(".item.selected"); if (sel) sel.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function renderMain() {
   const main = $("main"); const q = byId(selected);
@@ -816,7 +829,8 @@ function renderFooter() {
     : `<span class="sent"><span class="spin"></span>Sent #${lp.seq} · waiting for the agent</span>`;
   const loose = typedAnswers().map((id) => esc(id).toUpperCase());
   const note = loose.length ? ` <span class="warn" id="unstaged-note">${loose.length > 1 ? "Typed answers on " + loose.join(", ") + " are" : "Typed answer on " + loose[0] + " is"} not staged and will not be sent; press Stage text to include ${loose.length > 1 ? "them" : "it"}.</span>` : "";
-  list.innerHTML = locked() ? "This grill is finished." : (n ? `<b>${n} staged</b> · ${parts.join(" · ")}${sent ? " · " + sent : ""}` : sent || "Nothing staged. Pick an option or write in the discussion.") + note;
+  list.classList.toggle("is-empty", !locked() && !n && !sent && !note);
+  list.innerHTML = locked() ? "This grill is finished." : (n ? `<b>${n} staged</b> · ${parts.join(" · ")}${sent ? " · " + sent : ""}` : sent || "请选择选项，或填写讨论。") + note;
   const fa = $("finish-area");
   if (locked()) fa.innerHTML = "";
   else if (isFinishing()) fa.innerHTML = `<button id="finish" type="button" disabled><span class="spin"></span>Finishing…</button>`;

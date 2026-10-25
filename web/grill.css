@@ -15,3 +15,45 @@ header h1{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflo
 @media(max-width:640px){header h1{flex:1 1 calc(100% - 130px);max-width:calc(100% - 112px);order:0}header .home-link{margin-right:0}header .request-kind{flex:none}}
 
 footer #handover-cancel{flex:0 0 100%;grid-column:1/-1;order:10;width:100%;min-height:44px;margin-top:4px}
+
+/* Mobile layout: compact numbered question navigation and readable phone cards. */
+@media(max-width:640px){
+  body{font-size:calc(var(--handover-font) * .9)}
+  #nav{display:block;flex:none;max-height:none;padding:10px 14px 12px;overflow:visible;background:var(--bg);border-right:0}
+  #nav .note{margin:0 0 8px;font-size:14px;line-height:1.5}
+  #nav .nav-progress{display:block;margin-bottom:8px;font:600 13px/1.5 var(--sans);color:var(--ink-2)}
+  #nav .nav-items{display:flex;gap:8px;overflow-x:auto;padding:2px 1px 5px;scroll-padding-inline:2px;overscroll-behavior-x:contain}
+  #nav .round{display:none}
+  #nav .item{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 44px;width:44px;min-width:44px;min-height:44px;padding:0;border:1px solid var(--rule);border-radius:12px;background:var(--panel);box-shadow:none}
+  #nav .item.selected{border:2px solid var(--accent);background:var(--accent);color:var(--on-fill)}
+  #nav .item .nav-number{display:block;font:600 17px/1 var(--sans)}
+  #nav .item .id,#nav .item .t,#nav .item .sword{display:none}
+  #nav .item .mark{position:absolute;right:4px;bottom:4px;width:5px;height:5px;border-radius:50%;background:currentColor;font-size:0;line-height:0;overflow:hidden}
+  #nav .item .mark svg,#nav .item .mark .spin{display:none}
+  #nav .item.selected .mark{color:var(--on-fill)}
+  #main{padding:14px 16px 20px;min-height:0}.card{width:100%;max-width:none}
+  .title-row{display:block;margin:8px 0 14px}.card h2{font:600 23px/1.45 var(--sans);overflow-wrap:anywhere}.title-row #explore{margin-top:10px;min-height:44px;padding:5px 10px}
+  #main .body,#main .why,#main .opt,#main .rec{font-size:calc(var(--handover-font) * .9);line-height:1.65}
+  #main .opts{gap:10px;margin-top:16px}#main .opt{grid-template-columns:22px minmax(0,1fr) 18px;gap:9px;padding:14px 12px;border-radius:12px}
+  #main .opt>span{min-width:0}#main .opt .k{font:600 17px/1.65 var(--sans)}#main .opt .tag{font-size:12px;line-height:1.5;margin-bottom:4px}#main .opt .check{width:18px;height:18px}
+  #main .opt .chips{gap:5px;margin-top:8px}#main textarea,#aside textarea{font-size:calc(var(--handover-font) * .9)!important;line-height:1.6}
+  footer{gap:6px;padding:8px 12px max(8px,env(safe-area-inset-bottom));box-shadow:0 -3px 12px #00000008}
+  footer button{min-height:44px;font-size:15px;padding:8px 12px}footer .staged-list{font-size:12px;line-height:1.4;max-height:3.8em;overflow:auto}footer .staged-list:empty{display:none}footer #send-why{font-size:12px;line-height:1.4}footer #handover-cancel{min-height:44px;margin-top:0;font-size:14px;padding:5px 10px}
+}
+
+/* Mobile toolbar: one compact header line, details only when requested. */
+@media(max-width:640px){
+  header{position:relative;display:grid;grid-template-columns:44px minmax(0,1fr) 60px;align-items:center;padding:4px 12px;gap:2px 6px}
+  header .home-link{grid-column:1;grid-row:1;min-height:44px}header h1{grid-column:2;grid-row:1;max-width:none;width:100%;margin:0;font-size:18px;line-height:1.4}
+  header .status{grid-column:1/-1;grid-row:2;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;line-height:18px;margin:0}
+  header #agent-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header #progress{display:none}
+  header #handover-receipt{grid-column:1/-1;font-size:12px;line-height:1.4}
+  .handover-more{grid-column:3;grid-row:1;position:relative;margin:0;z-index:6}
+  .handover-more summary{display:flex;align-items:center;justify-content:center;min-height:44px;font-size:14px;cursor:pointer;list-style:none;border:1px solid var(--rule);border-radius:8px}.handover-more summary::-webkit-details-marker{display:none}
+  .handover-more-panel{position:absolute;right:0;top:calc(100% + 6px);display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:252px;max-width:calc(100vw - 24px);padding:12px;background:var(--panel);border:1px solid var(--rule);border-radius:12px;box-shadow:0 8px 24px #0002}
+  .handover-more:not([open]) .handover-more-panel{display:none}.handover-more-panel button{min-height:44px;margin:0}.handover-more-panel #doc-path,.handover-more-panel #intent{flex-basis:100%;font-size:12px;white-space:normal}
+  .card h2{font-size:20px;line-height:1.45}.title-row{margin:4px 0 10px}
+  footer{gap:6px;padding:6px 12px max(6px,env(safe-area-inset-bottom))}
+  footer .staged-list.is-empty{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+  footer #finish-area button,footer #send,footer #handover-cancel{min-height:44px;box-sizing:border-box;padding:6px 10px;line-height:1.4}
+}

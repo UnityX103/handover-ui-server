@@ -110,4 +110,23 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('header').append(button);
   }
   apply();
+  // Phone toolbar: preserve the same controls and handlers in a native disclosure.
+  const header = document.querySelector('header');
+  const more = document.createElement('details'); more.className = 'handover-more';
+  const summary = document.createElement('summary'); summary.textContent = '更多'; more.append(summary);
+  const panel = document.createElement('div'); panel.className = 'handover-more-panel'; more.append(panel);
+  const controls = [...header.querySelectorAll('#terms-toggle,#visualize,#theme-toggle,#levels-toggle,.handover-size,.request-kind,#doc-path,#intent')].map(node => {
+    const anchor = document.createComment('toolbar-control'); node.before(anchor); return {node,anchor};
+  });
+  header.append(more);
+  const mobile = window.matchMedia('(max-width:640px)');
+  const arrange = () => {
+    more.hidden = !mobile.matches;
+    for (const {node,anchor} of controls) { if (mobile.matches) panel.append(node); else anchor.after(node); }
+    if (!mobile.matches) more.open = false;
+  };
+  for (const {node} of controls) if (node.id === 'terms-toggle' || node.id === 'levels-toggle') {
+    node.addEventListener('click', () => { if (mobile.matches) more.open = false; });
+  }
+  mobile.addEventListener('change', arrange); arrange();
 });
