@@ -56,6 +56,6 @@ cat /opt/handover-ui/deployment.json
 
 端口改变会形成新的浏览器 origin；原 8024 的用户名记忆、PWA 安装和通知订阅仍属于原入口。使用新 443 地址时需在手机重新选择用户名、添加到桌面并主动开启通知，沿用原 VAPID 密钥；不自动搬移订阅或申请权限。
 
-Skill 在 `new`、有效 schema 2 的 `resume`、`home` 前检查仓库 `main`，按确定提交备份、更新后继续。它只更新本机 Skill，服务器仍使用 push webhook 发布。
+Skill 在 `new`、有效 schema 2 的 `resume`、`home` 前，用本机 Git 非交互运行 `git ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main` 取得公开仓库完整 SHA，再用 Node.js 22.11+ 内置 fetch 从 `raw.githubusercontent.com/UnityX103/handover-ui-server/<完整 SHA>/` 下载清单和文件。无需 gh、GitHub 登录或访问 token；需能访问这两个公开 HTTPS 服务。清单路径校验、并发锁、完整下载后备份、按目录原子重命名切换及失败恢复不变；检查或下载失败保留现有 Skill、配置、handle 和游标；安装恢复异常会明确报告 recovery-needed，并保留备份与锁等待人工处理。它只更新本机 Skill，服务器仍使用既有 push webhook 发布，只读 Git 部署身份及凭据不变。
 
 手机访问同一入口并添加到主屏幕，开启通知由本人在设备上授权。通知跳转保持请求身份；页面收到服务器保存成功回执后立即返回当前用户名列表，不等待来源 Agent ack；“已发送，等待回复”及后端处理/确认流程不变。真实系统通知与安装需真机验收，不能用浏览器模拟结果代替。

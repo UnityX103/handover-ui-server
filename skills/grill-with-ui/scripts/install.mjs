@@ -59,10 +59,14 @@ export function installBundle({ manifest, files, version, skillsDir = skillsDire
     }
     if (compositionUpdated) fs.renameSync(compositeStage, composite);
   } catch (error) {
+    const recoveryErrors = [];
     for (const item of moved.reverse()) {
-      if (item.installed) fs.rmSync(item.destination, { recursive: true, force: true });
-      if (item.existed) fs.renameSync(item.previous, item.destination);
+      try {
+        if (item.installed) fs.rmSync(item.destination, { recursive: true, force: true });
+        if (item.existed) fs.renameSync(item.previous, item.destination);
+      } catch (recoveryError) { recoveryErrors.push(recoveryError); }
     }
+    if (recoveryErrors.length) throw Object.assign(new Error('Skill 更新失败且部分恢复未完成；原文件保留在备份中'), { recoveryNeeded: true, backup });
     throw error;
   }
   return { ok: true, installed: names.map((name) => path.join(skillsDir, name)), compositionUpdated, backup, version, entrypoint: path.join(skillsDir, 'grill-with-ui/scripts/handover.mjs') };

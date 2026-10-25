@@ -61,8 +61,8 @@
 ## Skill 配置与更新
 
 - 两份 Skill 共用 `~/.config/handover-ui/config.json`，权限为 0600。`HANDOVER_CONFIG` 可指定配置文件；`HANDOVER_SERVER_URL`、`HANDOVER_USERNAME` 分别覆盖目标服务器和目标用户名；未配置用户名时始终默认 Xpy。旧 `HANDOVER_AGENT_TOKEN` 与保存的 agentToken 被忽略；`--token-stdin` 和旧登录入口停用，原配置和数据不删除。用户名是公开命名空间，不是认证；任何知道用户名的人可操作其新请求。不得将用户名模式接入 owner 登录票据、登录码、管理员或 Webhook 权限，不自动公开旧无用户名数据。
-- 客户端在 `new`、有效 schema 2 的 `resume`、`home` 前通过本机已登录的 `gh` 检查仓库 `UnityX103/handover-ui-server` 的 `main` 完整 SHA；有更新则从同一个确定提交下载清单和文件，备份、安装，再以新版客户端继续原操作。
-- 保留清单路径校验、并发锁、完整下载后安装及失败恢复。更新失败时报告并继续使用现有版本，不宣称已更新，不重建已有请求。`wait`、`patch`、`ack` 不在同一交接中反复检查更新。
+- 客户端在 `new`、有效 schema 2 的 `resume`、`home` 前通过本机 Git 非交互运行 `git ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main` 检查完整 SHA；无需 gh 登录或访问 token。有更新则使用 Node.js 内置 fetch 从 `raw.githubusercontent.com` 固定同一完整 SHA 下载清单和文件，备份、安装，再以新版客户端继续原操作。
+- 客户端更新只读取公开仓库；不改变服务器只读 Git 部署身份、Webhook 验签或发布链路。保留清单路径校验、并发锁、完整下载后的备份、按目录原子重命名切换及失败恢复。更新失败时报告并继续使用现有版本，不宣称已更新，不重建已有请求。`wait`、`patch`、`ack` 不在同一交接中反复检查更新。
 - 源码修改落在仓库内的 Skill、客户端与安装模板，不只修改用户安装副本。需要安装时运行 `npm run install:skills`；更新结果为 `updated:true` 时重读已安装说明。
 - 替换旧 Skill 前备份到技能发现目录之外，默认 `~/.local/share/handover-ui/skill-backups/`。保留本地配置、请求 handle、游标及已有 `grill-with-docs-ui` 的组合能力。
 
