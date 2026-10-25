@@ -55,9 +55,19 @@ try {
   await page.waitForFunction(() => document.querySelector('#free')?.value === '隔离草稿，刷新后保留');
   assert.equal(await page.locator('.opt.staged').count(), 2);
   await fit('手机问卷');
+  // Phone tools are intentionally collapsed: exercise the same disclosure a person uses.
+  const more = page.locator('.handover-more');
+  assert.equal(await more.getAttribute('open'), null);
+  assert.equal(await page.getByRole('button', { name: '字号 +' }).isVisible(), false);
+  assert.equal(await page.locator('main').evaluate((el) => getComputedStyle(el).fontSize), '18px');
+  await more.locator('summary').click();
   await page.getByRole('button', { name: '字号 +' }).click();
-  const font = await page.locator('main').evaluate((el) => getComputedStyle(el).fontSize);
-  assert.equal(font, '22px');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--handover-font').trim()), '22px');
+  // Approved compact phone text scales to 90%; the stored font preference remains 22px.
+  assert.equal(await page.locator('main').evaluate((el) => getComputedStyle(el).fontSize), '19.8px');
+  assert.equal(await page.locator('.opt').first().evaluate((el) => getComputedStyle(el).fontSize), '19.8px');
+  await more.locator('summary').click();
+  assert.equal(await page.getByRole('button', { name: '字号 +' }).isVisible(), false);
   await fit('手机放大字号');
   if (evidence) await page.screenshot({ path: path.join(evidence, 'phone-questionnaire.png'), fullPage: true });
   // Clear only the unsent text; preserve the staged multi-selection.
@@ -91,7 +101,11 @@ try {
   assert.equal(second.handled, 0); assert.equal(second.waitingFor, 'agent');
   await page.goto(`${url}/grill/${b.id}/?username=Xpy`); await page.locator('#free').waitFor();
   await page.setViewportSize({ width: 820, height: 1180 });
+  await page.waitForFunction(() => document.querySelector('.handover-more')?.hidden === true);
   await fit('平板反馈');
+  assert.equal(await page.locator('.handover-more').isVisible(), false);
+  assert.equal(await page.getByRole('button', { name: '字号 +' }).isVisible(), true);
+  assert.equal(await page.locator('main').evaluate((el) => getComputedStyle(el).fontSize), '22px');
   const geometry = await page.evaluate(() => Object.fromEntries(['header','#main','#aside','footer'].map((selector) => { const r=document.querySelector(selector).getBoundingClientRect();return [selector,{top:r.top,bottom:r.bottom}]; })));
   assert.ok(geometry['#aside'].top >= geometry['#main'].bottom - 1, JSON.stringify(geometry));
   assert.equal(await page.locator('header').count(), 1);
