@@ -9,6 +9,7 @@ import webpush from 'web-push';
 import { applyPatch, validateState, validateAxesChange } from '../server.mjs';
 import { Store, atomic, hash, equal, now, validId } from './store.mjs';
 import { publicEndpoint, requestMount, shellHtml } from './public-paths.mjs';
+import {NotificationOutbox, notificationSettings, notificationDescriptor} from './notify-outbox.mjs';
 import { customLimits, customPage, pageInfo, savedFeedback, validateFeedback, customCsp, customContent } from './custom-page.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -48,11 +49,17 @@ export function createHandoverServer(options = {}) {
     dataDir: process.env.HANDOVER_DATA_DIR || path.join(os.homedir(), '.local/share/handover-ui'),
     adminToken: process.env.HANDOVER_ADMIN_TOKEN,
     vapidPublicKey: process.env.HANDOVER_VAPID_PUBLIC_KEY, vapidPrivateKey: process.env.HANDOVER_VAPID_PRIVATE_KEY,
-    vapidSubject: process.env.HANDOVER_VAPID_SUBJECT, ...options,
+    vapidSubject: process.env.HANDOVER_VAPID_SUBJECT,
+    notifyEnabled:process.env.HANDOVER_NOTIFY_ENABLED || '0', notifySocket:process.env.HANDOVER_NOTIFY_SOCKET,
+    notifySocketUid:process.env.HANDOVER_NOTIFY_SOCKET_UID, notifySources:process.env.HANDOVER_NOTIFY_SOURCES,
+    notifyUsernames:process.env.HANDOVER_NOTIFY_USERNAMES, notifyMaxPending:process.env.HANDOVER_NOTIFY_MAX_PENDING,
+    notifyPerMinute:process.env.HANDOVER_NOTIFY_PER_SOURCE_MINUTE, notifyIntervalMs:process.env.HANDOVER_NOTIFY_INTERVAL_MS,
+    notifyTimeoutMs:process.env.HANDOVER_NOTIFY_TIMEOUT_MS, ...options,
   };
   if (!text(config.adminToken) || config.adminToken.length < 32) throw new Error('管理密钥至少 32 字符；旧登录入口已停用');
   const publicUrl = publicEndpoint(config.publicUrl);
   const endpoints = [publicUrl, ...config.publicAliases.split(',').filter(Boolean).map((value) => publicEndpoint(value.trim()))];
+  const notifySettings = notificationSettings(config);
   const store = new Store(config.dataDir);
   // Archived login codes, sessions, tickets and credentials are retained untouched.
   let vapid = store.all('vapid');
@@ -117,6 +124,13 @@ export function createHandoverServer(options = {}) {
   const version = config.version || process.env.HANDOVER_VERSION || (() => { try { return fs.readFileSync(path.join(ROOT, 'VERSION'), 'utf8').trim(); } catch { return 'development'; } })();
   let server;
   const actualOrigin = () => `http://${config.host === '::1' ? '[::1]' : config.host}:${server.address()?.port || config.port}`;
+  const notificationBases = () => endpoints.map(endpoint => {
+    const base=new URL(endpoint);
+    if(base.protocol==='http:'&&base.port==='0'&&base.hostname===new URL(actualOrigin()).hostname)base.port=new URL(actualOrigin()).port;
+    return base.href;
+  });
+  const notifications = new NotificationOutbox({store,settings:notifySettings,endpoints:notificationBases,transport:options.notificationTransport,clock:options.notificationClock});
+  const descriptor = (r, fallback) => notificationDescriptor(r,r.requestUrl || fallback,notificationBases());
   const page = (r, basePath) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');
@@ -217,20 +231,24 @@ export function createHandoverServer(options = {}) {
         if (data.username !== name || (data.accessMode !== undefined && data.accessMode !== 'username')) fail(400, '请求用户名或模式不一致');
         if (!validId(data.id) || !kinds.includes(data.kind) || !text(data.topic, 200) || !data.topic.trim() || !text(data.source?.session, 200) || !data.source.session.trim() || !text(data.source?.project || '', 2000) || !text(data.source?.machine || '', 200)) fail(400, '请求 ID、类型、标题、来源或凭据无效');
         const existing = store.get(data.id), creationHash = hash(JSON.stringify(data));
-        if (existing) { if (!usernameRecord(existing) || existing.username !== name) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); return json(res, 200, { ok: true, ...publicRequest(existing), url: `${origin}${basePath}grill/${data.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` }); }
+        const requestUrl=`${origin}${basePath}grill/${data.id}/?username=${encodeURIComponent(name)}`;
+        if (existing) { if (!usernameRecord(existing) || existing.username !== name) fail(404, '请求不存在'); if (existing.creationHash !== creationHash) fail(409, '请求 ID 已存在且内容不同'); notifications.committed(existing);return json(res, 200, { ok: true, ...publicRequest(existing), url:requestUrl, notification:descriptor(existing,requestUrl) }); }
         const created = now();
         let state = { topic: data.topic, intent: data.context || '', project: data.source.project || '', created, doc: '', agent: { status: 'waiting', handled: 0, since: created }, questions: [], terms: [] };
         const questions = data.questions?.length ? data.questions : [{ id: 'q1', round: 1, title: data.topic, body: data.context || '', options: data.options || [], rec: {} }];
         if (!Array.isArray(questions) || questions.length > 100) fail(400, '问题数量应为 1–100');
         state = applyPatch(state, { questions }, created); validateState(state);
         const page = customPage(data.page);
-        const r = { id: data.id, kind: data.kind, source: data.source, accessMode:'username', username:name, creationHash, created, updated: created, status: 'waiting', awaitingReply: false, userAttentionVersion: 1, state, events: [], ...(page ? { page } : {}) };
-        store.put(r); notifyLater(r); return json(res, 201, { ok: true, ...publicRequest(r), url: `${origin}${basePath}grill/${r.id}/${name ? '?username=' + encodeURIComponent(name) : ''}` });
+        const r = { id: data.id, kind: data.kind, source: data.source, accessMode:'username', username:name, creationHash, created, updated: created, status: 'waiting', awaitingReply: false, userAttentionVersion: 1, state, events: [], requestUrl, ...(page ? { page } : {}) };
+        r.notificationEvent=descriptor(r,requestUrl);
+        notifications.prepare(r,requestUrl);store.put(r);notifications.committed(r);notifyLater(r);
+        return json(res, 201, { ok: true, ...publicRequest(r), url:requestUrl, notification:descriptor(r,requestUrl) });
       }
       const api = p.match(/^\/api\/requests\/([A-Za-z0-9_-]{8,100})(?:\/(wait|ack|visual|cancel))?$/);
       if (api) {
         let r = store.get(api[1]); scoped(req, r); const operation = api[2];
-        if (req.method === 'GET' && !operation) return json(res, 200, { ...publicRequest(r), state: r.state });
+        const requestUrl=`${origin}${basePath}grill/${r.id}/?username=${encodeURIComponent(r.username)}`;
+        if (req.method === 'GET' && !operation) return json(res, 200, { ...publicRequest(r), state: r.state, notification:descriptor(r,requestUrl) });
         if (req.method === 'GET' && operation === 'wait') {
           const after = u.searchParams.has('after') ? Number(u.searchParams.get('after')) : (r.state.agent.handled || 0), timeout = Number(u.searchParams.get('timeout') || 0);
           if (!Number.isInteger(after) || after < 0 || after > r.events.length || !Number.isFinite(timeout) || timeout < 0 || timeout > 30) fail(400, '无效游标或等待时长；每次最长 30 秒');
@@ -246,11 +264,13 @@ export function createHandoverServer(options = {}) {
           const next = applyPatch(r.state, patch, now()); validateState(next); validateAxesChange(r.state, next);
           if (r.state.finished && !next.finished) fail(409, '已完成请求不能重新激活，请创建新请求');
           const added = next.questions.some((q) => !r.state.questions.some((old) => old.id === q.id));
-          const reopened = Array.isArray(patch.questions) && patch.questions.some((q) => ['open', 'reopened'].includes(q.status) && r.state.questions.some((old) => old.id === q.id));
+          const reopened = Array.isArray(patch.questions) && patch.questions.some((q) => ['open', 'reopened'].includes(q.status) && r.state.questions.some((old) => old.id === q.id && !['open','reopened'].includes(old.status)));
           if (added || reopened) r.userAttentionVersion = attentionVersion(r) + 1;
           r.awaitingReply = next.finished || added || reopened ? false : awaitingReply(r);
           r.state = next; r.updated = now(); r.status = next.finished ? 'completed' : (r.events.length > (next.agent.handled || 0) ? 'submitted' : 'waiting');
-          store.put(r); emit(r); if (added || reopened) notifyLater(r); return json(res, 200, { ok: true, ...publicRequest(r) });
+          if(added||reopened){r.requestUrl ||= requestUrl;r.notificationEvent=descriptor(r,r.requestUrl);notifications.prepare(r,r.requestUrl);}
+          store.put(r);notifications.committed(r);emit(r);if(added||reopened)notifyLater(r);
+          return json(res, 200, { ok: true, ...publicRequest(r), notification:descriptor(r,requestUrl) });
         }
         if (req.method === 'POST' && operation === 'ack') {
           const data = await body(req); r = store.get(api[1]); scoped(req, r);
@@ -329,8 +349,9 @@ export function createHandoverServer(options = {}) {
     }
   });
   server.requestTimeout = 40000; server.headersTimeout = 10000; server.keepAliveTimeout = 5000;
-  server.on('close', () => { for (const stop of waiters.values()) stop(); changes.removeAllListeners(); });
-  return { server, store, config, notify };
+  server.on('listening',()=>notifications.start());
+  server.on('close', () => {void notifications.stop();for (const stop of waiters.values()) stop(); changes.removeAllListeners(); });
+  return { server, store, config, notify, notifications };
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
