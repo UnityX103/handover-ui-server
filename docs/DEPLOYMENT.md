@@ -19,7 +19,7 @@
 
 环境文件在仓库外保存，权限 0600，由 systemd 读取。更新、重启和 Skill 替换保留原值和存储文件。旧 Cookie、登录 session、票据、登录码和无用户名请求不再授予在线访问；`/api/login*`、配对、browser-tickets、owner logout 等退休入口返回 410。旧请求保持归档，不自动绑定或公开为 Xpy，不因客户端恢复而复制。旧推送订阅仅在该设备主动授权并提供完整 endpoint/keys 证明时可改绑；不能枚举或接管其他设备。VAPID 继续沿用现有值，不重新生成。只读 Git 部署身份也在仓库外维护。
 
-可选通知桥接的 `HANDOVER_NOTIFY_*` 配置与系统用户权限见 [通知桥接契约](notification-bridge.md)。默认 `HANDOVER_NOTIFY_ENABLED=0`，不启动出站扫描或连接 Bot socket。此功能的当前实现阶段只做本地验证，尚未启用远端配置；不新增网络监听端口，也不改 Web Push、Webhook 或原有凭据。
+可选通知桥接的 `HANDOVER_NOTIFY_*` 配置与系统用户权限见 [通知桥接契约](notification-bridge.md)。默认 `HANDOVER_NOTIFY_ENABLED=0`，不启动出站扫描或连接 Bot socket；启用状态以仓库外受限配置为准。先发布并确认 Bot 健康，再发布交接服务，由协调侧统一配置系统权限并启用两端；目标侧不并发修改这些配置。不新增网络监听端口，也不改 Web Push、Webhook 或原有凭据。验收不创建真实问题或发送测试微信。
 
 ## 发布与验收
 
