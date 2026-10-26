@@ -21,6 +21,8 @@
 
 可选通知桥接的 `HANDOVER_NOTIFY_*` 配置与系统用户权限见 [通知桥接契约](notification-bridge.md)。默认 `HANDOVER_NOTIFY_ENABLED=0`，不启动出站扫描或连接 Bot socket；启用状态以仓库外受限配置为准。先发布并确认 Bot 健康，再发布交接服务，由协调侧统一配置系统权限并启用两端；目标侧不并发修改这些配置。不新增网络监听端口，也不改 Web Push、Webhook 或原有凭据。验收不创建真实问题或发送测试微信。
 
+全访客自动通知须两端显式启用：目标侧配置 `HANDOVER_NOTIFY_SOURCES=*`、`HANDOVER_NOTIFY_USERNAMES=*`，Bot 配置 `visitor_policy="all"`、`auto_approve=true`。各名单仅允许单独的 `*` 或原有精确名单，不能混用。先在原单来源配置下发布支持新模式的两端版本并确认健康，再由协调侧统一更新仓库外配置、重启所属服务；仅扩大目标名单不会自动解除 Bot 的待批准状态。自动放行只接收可信同机交接应用的通知，发送给既有绑定微信用户，保留固定站点、请求/来源/用户名格式、去重和限流，不开放任意联系人或业务执行。全来源模式支持服务已有的合法请求 ID 及安全文本来源，精确来源模式仍要求 UUID。该变更只覆盖未来真实新建、追加及 Agent 真正重开的待答事项，不扫描历史请求补发，也不重放 `unknown`。
+
 ## 发布与验收
 
 1. GitHub `main` push 触发原生 Webhook。地址为 `HANDOVER_PUBLIC_URL` 加 `/hooks/github`，只接收带正确签名的 POST。

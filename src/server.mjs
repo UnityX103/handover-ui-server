@@ -138,7 +138,7 @@ export function createHandoverServer(options = {}) {
     return base.href;
   });
   const notifications = new NotificationOutbox({store,settings:notifySettings,endpoints:notificationBases,transport:options.notificationTransport,clock:options.notificationClock});
-  const descriptor = (r, fallback) => notificationDescriptor(r,r.requestUrl || fallback,notificationBases());
+  const descriptor = (r, fallback) => notificationDescriptor(r,r.requestUrl || fallback,notificationBases(),notifySettings.sources?.has('*') === true);
   const page = (r, basePath) => {
     let html = fs.readFileSync(path.join(ROOT, 'page.html'), 'utf8').replace('__GRILL_THEME__', 'system');
     html = html.replace('<html lang="en"', '<html lang="zh-CN"');

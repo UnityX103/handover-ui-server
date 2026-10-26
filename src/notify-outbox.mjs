@@ -1,5 +1,5 @@
 import path from 'node:path';
-import {hash, now} from './store.mjs';
+import {hash, now, validId} from './store.mjs';
 import {publicEndpoint} from './public-paths.mjs';
 import {socketRequest} from './notify-socket.mjs';
 
@@ -8,14 +8,17 @@ const waiting = (r) => r?.accessMode === 'username' && !['completed','cancelled'
 const recordLimit = 32;
 const accepted = new Set(['awaiting_approval','pending','dispatching','succeeded','failed','unknown']);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const username = /^[A-Za-z0-9_-]{1,64}$/;
 const integer = (value, fallback, min, max, name) => {
   const result = value === undefined || value === '' ? fallback : Number(value);
   if (!Number.isSafeInteger(result) || result < min || result > max) throw new Error(`${name} 配置无效`);
   return result;
 };
 const list = (value, pattern, name) => {
-  const result = String(value || '').split(',').map(x=>x.trim()).filter(Boolean);
-  if (!result.length || result.some(x=>!pattern.test(x))) throw new Error(`${name} 必须显式配置精确白名单`);
+  const input = String(value || '').trim();
+  if (input === '*') return new Set(['*']);
+  const result = input.split(',').map(x=>x.trim()).filter(Boolean);
+  if (!result.length || result.some(x=>!pattern.test(x))) throw new Error(`${name} 必须显式配置精确白名单或单独的 *`);
   return new Set(result);
 };
 
@@ -28,7 +31,7 @@ export function notificationSettings(config) {
   return {enabled:true, socketPath:config.notifySocket,
     socketUid:integer(config.notifySocketUid, -1, 0, 0xffffffff, 'HANDOVER_NOTIFY_SOCKET_UID'),
     sources:list(config.notifySources, /^[A-Za-z0-9_-]{8,200}$/, 'HANDOVER_NOTIFY_SOURCES'),
-    usernames:list(config.notifyUsernames, /^[A-Za-z0-9_-]{1,64}$/, 'HANDOVER_NOTIFY_USERNAMES'),
+    usernames:list(config.notifyUsernames, username, 'HANDOVER_NOTIFY_USERNAMES'),
     maxPending:integer(config.notifyMaxPending, 128, 1, 512, 'HANDOVER_NOTIFY_MAX_PENDING'),
     perMinute:integer(config.notifyPerMinute, 5, 1, 20, 'HANDOVER_NOTIFY_PER_SOURCE_MINUTE'),
     intervalMs:integer(config.notifyIntervalMs, 1000, 50, 60000, 'HANDOVER_NOTIFY_INTERVAL_MS'),
@@ -37,6 +40,13 @@ export function notificationSettings(config) {
 
 export function notificationId(requestId, version) { return hash(JSON.stringify([schema, requestId, version])); }
 
+function validIdentity(r, allSources) {
+  if (r?.accessMode !== 'username' || typeof r.username !== 'string' || !username.test(r.username)) return false;
+  if (!allSources) return uuid.test(r.id) && uuid.test(r.source?.session);
+  const source = r.source?.session;
+  return validId(r.id) && typeof source === 'string' && source.length <= 200 && !!source.trim() && !/\p{C}/u.test(source);
+}
+
 function validLink(value, request, endpoints) {
   let url;
   try { url = new URL(value); } catch { return false; }
@@ -44,8 +54,8 @@ function validLink(value, request, endpoints) {
   return endpoints.some(endpoint => value===publicEndpoint(endpoint).href+'grill/'+request.id+'/?username='+encodeURIComponent(request.username));
 }
 
-export function notificationDescriptor(r, url, endpoints) {
-  if(r.accessMode!=='username'||!uuid.test(r.id)||!uuid.test(r.source?.session)||!['questionnaire','feedback','help'].includes(r.kind))return undefined;
+export function notificationDescriptor(r, url, endpoints, allSources = false) {
+  if(!validIdentity(r,allSources)||!['questionnaire','feedback','help'].includes(r.kind))return undefined;
   const version=r.userAttentionVersion||1;
   const previous=r.notificationOutbox?.entries.find(entry=>entry.version===version)?.event || r.notificationEvent;
   if(previous?.event_id===notificationId(r.id,version)&&validLink(previous.url,r,endpoints))return previous;
@@ -67,7 +77,12 @@ export class NotificationOutbox {
       }
     }
   }
-  allowed(r) { return this.settings.enabled && uuid.test(r.id) && uuid.test(r.source?.session) && this.settings.sources.has(r.source?.session) && this.settings.usernames.has(r.username); }
+  allowed(r) {
+    const s = this.settings;
+    return s.enabled && validIdentity(r,s.sources.has('*')) &&
+      (s.sources.has('*') || s.sources.has(r.source?.session)) &&
+      (s.usernames.has('*') || s.usernames.has(r.username));
+  }
   remember(entry) {
     if (entry.createdAt < this.clock()-60000) return;
     const source=entry.event.source_session, times=this.recent.get(source)||[];
@@ -83,7 +98,7 @@ export class NotificationOutbox {
     const times=(this.recent.get(r.source.session)||[]).filter(t=>t>this.clock()-60000);this.recent.set(r.source.session,times);
     const reason=!validLink(url,r,this.endpoints())?'invalid_link':this.pending.size>=this.settings.maxPending?'queue_full':times.length>=this.settings.perMinute?'rate_limited':null;
     if (reason) { box.lastSkipped={version,at:now(),reason};return false; }
-    const event=notificationDescriptor(r,url,this.endpoints());
+    const event=notificationDescriptor(r,url,this.endpoints(),this.settings.sources.has('*'));
     if(!event){box.lastSkipped={version,at:now(),reason:'invalid_descriptor'};return false;}
     const entry={version,event,createdAt:this.clock(),state:'pending',uncertain:false,attempts:0,nextAttemptAt:this.clock()};
     box.entries=box.entries.filter(e=>e.state==='pending').concat(box.entries.filter(e=>e.state!=='pending').slice(-(recordLimit-1)),entry);
