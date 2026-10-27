@@ -127,7 +127,7 @@ export async function main(argv=process.argv.slice(2)) {
       const result=await request(cfg.serverUrl,'/api/requests',{username:cfg.username,method:'POST',data:payload});
       h.registered=true;atomic(file,h);
       let opened={opened:false}; if(!o['no-open'])try{opened=await openBrowser(cfg,id);}catch{opened={opened:false,note:'请求已保存，自动打开未完成。可使用 open 重试。'};}
-      out({ok:true,handle:file,requestId:id,source,url:result.url,notification:result.notification,...opened});
+      out({ok:true,handle:file,requestId:id,source,url:result.url,...opened});
     }catch(error){out({ok:false,handle:file,requestId:id,error:error.message,recovery:'使用 resume --handle 恢复同一请求，不要重新 new'});process.exitCode=1;}return;
   }
   const {file,h}=handleFor(o);
@@ -136,7 +136,7 @@ export async function main(argv=process.argv.slice(2)) {
       const cfg=config();if(cfg.serverUrl!==h.serverUrl)throw new Error('当前配置已指向其他服务器，请恢复原服务器配置后重试创建');
       await request(h.serverUrl,'/api/requests',{username:h.username,method:'POST',data:h.creation}); h.registered=true;atomic(file,h);
     }
-    const result=await scoped(h);out({ok:true,handle:file,requestId:h.id,source:h.source,status:result.status,handled:result.handled,url:requestUrl(h,h.id),notification:result.notification});return;
+    const result=await scoped(h);out({ok:true,handle:file,requestId:h.id,source:h.source,status:result.status,handled:result.handled,url:requestUrl(h,h.id)});return;
   }
   if(command==='open') { const cfg=config();if(cfg.serverUrl!==h.serverUrl)throw new Error('当前服务器配置与 handle 不一致');out({ok:true,url:requestUrl(h,h.id),...await openBrowser({...cfg,username:h.username},h.id)});return; }
   if(command==='state') { out(await scoped(h));return; }
