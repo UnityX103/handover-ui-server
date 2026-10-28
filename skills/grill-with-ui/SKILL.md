@@ -31,13 +31,21 @@ description: 通过配置的远程交接服务发起 Grill 问卷，由本机 Ap
 
 可单独运行 `node "$SKILL/scripts/handover.mjs" update` 检查并更新，不创建交接请求。隔离测试可用 `HANDOVER_SKIP_UPDATE=1` 禁止访问真实 GitHub。
 
+## 阅读与讨论
+
+- 先给一句话结论或待决定事项，再给必要依据。短段落、清楚的要点，避免一整屏连续文字；不靠小字或淡色承载重要内容。
+- 每个讨论项单独追加一条 `thread` 消息：`{"who":"agent","text":"一句话总结。\n\n详细说明与必要依据。"}`。首段只放一句话总结，空一行后再展开；页面默认显示总结，点击后阅读详情。总结应概括判断，不能只是“详情如下”或截取正文片段。
+- 描述先压缩为一句话重点和少量要点。仍超过约 200 字、连续三段，或需要解释多个步骤、分支及关系时，必须给与本题对应的配图或流程图，帮助本人阅读；不要只增加文字。短问题无需额外配图。
+- 配图沿用已有图解通道：用 `visual --handle … --file /absolute/path/visual.html` 上传自包含 HTML，再 `patch` 写入 `visual:{kind:"diagram",version:1,note:"对应题号与一句话图意"}`；后续更新递增版本。图内写明对应题号，保留简短文字说明；普通问题、答复及消费仍走原请求协议。不得把原始 HTML 或 Mermaid 源码当作已经渲染的配图。
+- 讨论涉及需要本人批准的具体代码修改时，按[代码修改与批准](references/code-review.md)提供文件位置、前后代码和可渲染的预期效果，供本人在页面底部审核。代码显示使用 Rider 风格；已有实施授权不重复设置批准关卡。
+
 ## 发起一轮
 
 已有专用审核页或自定义 JSON 的 Skill 按[自定义页面契约](references/custom-pages.md)接入；普通 Grill 问卷继续使用下述题目协议。
 
 1. 先从当前项目查清可发现的事实。每轮通常提出 2–4 个独立、会影响结果的问题，只有一个必要问题时问一个。给出简明选项、推荐及取舍；依赖前题的问题留到收到答复之后。
 2. 使用经过核实的来源会话 ID。Codex 使用 `CODEX_THREAD_ID`；缺失时通过当前会话工具核实后传 `--source-session`，不能猜 ID、用最近会话或要求另一个会话代答。题目和必要背景同时保留在当前聊天中。
-3. 在私有临时文件准备 JSON，字段为 `topic`、`context` 和 `questions`。问题包含 `id`、`round`、`title`、`body`、`options:[{k,text}]`、`rec:{option,why}` 或 `rec:{text,why}`；没有推荐时仍须写 `rec:{}`，多选用 `multi:true` 和 `rec.options`。不默认制作可视化。
+3. 在私有临时文件准备 JSON，字段为 `topic`、`context` 和 `questions`。问题包含 `id`、`round`、`title`、`body`、`options:[{k,text}]`、`rec:{option,why}` 或 `rec:{text,why}`；没有推荐时仍须写 `rec:{}`，多选用 `multi:true` 和 `rec.options`。按“阅读与讨论”组织内容，长描述提供对应图解。
 4. 创建请求，返回链接但不自动打开网页或拉起 App：
 
 ```sh

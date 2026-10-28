@@ -24,9 +24,73 @@ if (typeof renderMain === 'function') {
       subtitle.textContent = context;
       main.prepend(subtitle);
     }
+    if (typeof handoverRenderCodeReview === 'function') handoverRenderCodeReview(main, byId(selected));
     return result;
   };
 }
+// Truncate navigation visually while keeping the complete question available on hover.
+if (typeof renderNav === 'function') {
+  const handoverOriginalRenderNav = renderNav;
+  renderNav = function(...args) {
+    const result = handoverOriginalRenderNav(...args);
+    for (const item of document.getElementById('nav').querySelectorAll('.item')) {
+      const title = item.querySelector('.t')?.textContent || '';
+      item.title = title + (item.title ? '\n' + item.title : '');
+      item.setAttribute('aria-label', item.getAttribute('aria-label').replace(/（open）$/, ''));
+    }
+    return result;
+  };
+}
+
+// New Agent replies start with a one-sentence conclusion, then a blank line and details.
+// Older replies use their first sentence as a preview and retain the entire original text.
+function handoverDiscussionParts(text) {
+  const value = String(text || '').trim();
+  const paragraph = value.match(/^([^\n]+)\n\s*\n([\s\S]+)$/);
+  if (paragraph && Array.from(paragraph[1]).length <= 120) return {summary:paragraph[1],details:paragraph[2]};
+  const first = value.split('\n')[0];
+  const sentence = first.match(/^.*?(?:[。！？!?]|\.(?=\s|$))/)?.[0] || first;
+  const characters = Array.from(sentence);
+  const summary = characters.length > 80 ? characters.slice(0,80).join('') + '…' : sentence;
+  return {summary,details:summary === value ? '' : value};
+}
+const handoverDiscussionOpen = new Map();
+if (typeof renderAside === 'function') {
+  const handoverOriginalRenderAside = renderAside;
+  renderAside = function(...args) {
+    const aside = document.getElementById('aside');
+    for (const details of aside.querySelectorAll('.handover-discussion')) {
+      const saved = handoverDiscussionOpen.get(details.dataset.discussionKey);
+      if (saved) saved.open = details.open;
+    }
+    const result = handoverOriginalRenderAside(...args);
+    const isVisual = activeView() === 'visualize';
+    const scope = isVisual ? 'visual' : 'question:' + selected;
+    const thread = (isVisual ? visual() : byId(selected))?.thread || [];
+    const replies = thread.map((message,index) => ({message,key:scope + ':' + index})).filter(({message}) => message.who === 'agent');
+    const nodes = aside.querySelectorAll('.msg.agent .text');
+    replies.forEach(({message,key},index) => {
+      const body = nodes[index];
+      if (!body) return;
+      const parts = handoverDiscussionParts(message.text);
+      const label = document.createElement('span');
+      const formatted = document.createElement('div'); formatted.innerHTML = md(parts.summary);
+      label.textContent = formatted.textContent;
+      if (!parts.details) { body.classList.add('handover-discussion-conclusion'); return; }
+      const details = document.createElement('details'); details.className = 'handover-discussion'; details.dataset.discussionKey = key;
+      const saved = handoverDiscussionOpen.get(key);
+      details.open = saved?.text === message.text && saved.open;
+      handoverDiscussionOpen.set(key, {text:message.text,open:details.open});
+      const summary = document.createElement('summary'); summary.append(label); details.append(summary);
+      body.replaceWith(details); body.innerHTML = md(parts.details); details.append(body);
+      details.addEventListener('toggle', () => {
+        if (details.isConnected) handoverDiscussionOpen.set(key, {text:message.text,open:details.open});
+      });
+    });
+    return result;
+  };
+}
+
 // The upstream post function is hoisted; a second gesture must not start another POST.
 if (typeof post === 'function') {
   const handoverOriginalPost = post; let handoverPosting = false;

@@ -31,6 +31,12 @@ App 沿用两份 Skill 的本地服务器与用户名配置；首次在 App 内�
 
 ## 手机使用
 
+标准反馈页的问题说明使用更大字号和宽松行距；讨论正文、输入区随字号控件一起调整。侧栏长标题单行省略，悬停可看全文，保留题号、选中及已发送/已回答状态，隐藏轮次栏和 `open` 字样。
+
+Agent 讨论每项先显示一句话总结，点击展开依据；切题或暂存操作后保留该项的展开状态。旧讨论用首句作预览，展开保留全文。生成内容时按远程 Skill 的“阅读与讨论”规范组织：长描述或多步骤关系须配对应图解。
+
+问题携带 `codeReview` 时，正文底部显示需要修改的文件、行号、修改原因和代码前后对照，采用 Rider Dark 配色与 JetBrains Mono 字体，并沿用本页字号。能渲染的预期效果显示在代码上方；点击“批准并发送”或“需要调整”通过原请求保存对应版本的决定，方案更新后旧版本不能批准新内容。效果页在沙箱内展示，服务器不会执行代码修改。数据格式见 [代码修改与批准](skills/grill-with-ui/references/code-review.md)，字体按 [SIL OFL](web/fonts/OFL.txt) 分发。
+
 列表默认只显示“待回答”，已提交给 Agent 的内容单列为“已发送，等待回复”；Agent 确认收件（ack）不会把它重新归为待回答，追加新问题或重开后才重新待回答，结束/取消保持已结束。
 
 列表顶部使用紧凑通知与退出控件，不显示大标题或常驻刷新按钮；在列表滚动到顶部时向下拉动刷新，键盘/屏幕阅读器仍可使用无障碍刷新控件。
@@ -137,6 +143,12 @@ npm test
 # 另行提供已安装的 Playwright 与 Chromium：
 PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium npm run test:browser
+# 标准页的阅读样式、讨论折叠与状态保持：
+PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium node test/readability.e2e.mjs
+# 代码区域、效果沙箱、Rider 风格和版本批准：
+PLAYWRIGHT_PKG=/absolute/path/playwright/index.mjs \
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/absolute/path/chromium node test/code-review.e2e.mjs
 # 复用上述 Playwright / Chromium 环境，验证子路径下的手机问答与 JSON 页面：
 HANDOVER_TEST_BASE_PATH=/handover node test/username.e2e.mjs
 # 指定两个 Skill 工作区，验证已发送反馈重开、换设备、确认后恢复及资源手动处理数据：

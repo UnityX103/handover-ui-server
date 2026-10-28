@@ -11,6 +11,7 @@ import { Store, atomic, hash, equal, now, validId } from './store.mjs';
 import { publicEndpoint, requestMount, shellHtml } from './public-paths.mjs';
 import {pushOutcome, startPushReceipt} from './push-receipts.mjs';
 import { customLimits, customPage, pageInfo, savedFeedback, validateFeedback, customCsp, customContent } from './custom-page.mjs';
+import { codeReviewLimits, prepareCodeReviews, validateReviewDecision, codePreviewCsp } from './code-review.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const kinds = ['questionnaire', 'feedback', 'help'];
@@ -27,6 +28,7 @@ function actionsValid(actions, state) {
   for (const a of actions) {
     if (!a || typeof a !== 'object' || !['answer', 'thread', 'defer', 'reopen', 'explore', 'visualize', 'visual-feedback', 'finish'].includes(a.type)) fail(400, '无效操作');
     const q = state.questions.find((q) => q.id === a.q);
+    validateReviewDecision(a, q);
     if (['answer', 'thread', 'defer', 'reopen', 'explore'].includes(a.type) && !q) fail(400, '操作指向未知问题');
     if (a.type === 'answer') {
       if (!['accept', 'option', 'text'].includes(a.kind)) fail(400, '无效答案类型');
@@ -135,7 +137,7 @@ export function createHandoverServer(options = {}) {
     html = html.replace('const handled = Number((S.agent || {}).handled) || 0;', 'const handled = Number((S.agent || {}).handled) || 0;\n  if (Array.isArray(S.submissions)) local.pending = S.submissions;\n  handoverReturnWhenAcknowledged(S);');
     html = html.replace('if (S && S.finished) { b.className', 'if (S && S.cancellation) { b.className = "show done"; b.textContent = "本次回答已取消；保留已有内容，不代表同意继续或已写入设计文档。"; return; }\n  if (S && S.finished) { b.className');
     html = html.replace('const key = "grill:" + (S.project || "") + ":" + (S.created || "");', 'const key = "handover:draft:" + handoverScope;');
-    html = html.replace('"use strict";', '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8'));
+    html = html.replace('"use strict";', () => '"use strict";\n' + fs.readFileSync(path.join(ROOT, 'web/grill-bridge.js'), 'utf8') + '\n' + fs.readFileSync(path.join(ROOT, 'web/code-review.js'), 'utf8'));
     if (usernameRecord(r)) {
       const gate = `(() => { const target = ${JSON.stringify(r.username)}; let handoverSelectedUser = null; try { handoverSelectedUser = localStorage.getItem('handover:username'); if (handoverSelectedUser === null) { handoverSelectedUser = sessionStorage.getItem('handover:username'); if (handoverSelectedUser) localStorage.setItem('handover:username', handoverSelectedUser); sessionStorage.removeItem('handover:username'); } } catch {} if (handoverSelectedUser !== target) { location.replace(${JSON.stringify(basePath + '?request=' + r.id + '&username=' + encodeURIComponent(r.username))}); return; }\n`;
       html = html.replace('"use strict";', '"use strict";\n' + gate).replace('</script>', '\n})();\n</script>');
@@ -196,7 +198,7 @@ export function createHandoverServer(options = {}) {
       if (req.headers.origin && req.headers.origin !== origin) fail(403, '拒绝跨站请求');
       if (req.headers['sec-fetch-site'] === 'cross-site' && !['GET', 'HEAD'].includes(req.method)) fail(403, '拒绝跨站写入');
       if (req.method === 'GET' && p === '/healthz') return json(res, 200, { ok: true, service: 'handover-ui', version });
-      if (req.method === 'GET' && p === '/api/capabilities') { requireUsername(req); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits }); }
+      if (req.method === 'GET' && p === '/api/capabilities') { requireUsername(req); return json(res, 200, { ok: true, service: 'handover-ui', customPage: customLimits, codeReview: codeReviewLimits }); }
       if (['/api/login','/api/login/ticket','/api/browser-tickets','/api/login-code','/api/pairing-tickets','/api/logout'].includes(p)) fail(410, '旧私有模式已停用；旧记录已封存，不删除或公开');
       if (req.method === 'GET' && p === '/api/me') return json(res, 200, { mode: 'username', username: requireUsername(req), authenticated: false, vapidPublicKey:vapid.publicKey, version });
       if (p === '/api/subscriptions' && req.method === 'POST') {
@@ -231,7 +233,7 @@ export function createHandoverServer(options = {}) {
         let state = { topic: data.topic, intent: data.context || '', project: data.source.project || '', created, doc: '', agent: { status: 'waiting', handled: 0, since: created }, questions: [], terms: [] };
         const questions = data.questions?.length ? data.questions : [{ id: 'q1', round: 1, title: data.topic, body: data.context || '', options: data.options || [], rec: {} }];
         if (!Array.isArray(questions) || questions.length > 100) fail(400, '问题数量应为 1–100');
-        state = applyPatch(state, { questions }, created); validateState(state);
+        state = applyPatch(state, { questions }, created); validateState(state); prepareCodeReviews(state);
         const page = customPage(data.page);
         const r = { id: data.id, kind: data.kind, source: data.source, accessMode:'username', username:name, creationHash, created, updated: created, status: 'waiting', awaitingReply: false, userAttentionVersion: 1, state, events: [], ...(page ? { page } : {}) };
         store.put(r);notifyLater(r);
@@ -253,7 +255,7 @@ export function createHandoverServer(options = {}) {
           if (Object.keys(patch).some((k) => !['topic', 'intent', 'doc', 'questions', 'terms', 'visual', 'agent', 'finished', 'axes', 'note'].includes(k))) fail(400, '不允许修改请求身份字段');
           if (Object.hasOwn(patch, 'agent') && (!patch.agent || typeof patch.agent !== 'object' || Array.isArray(patch.agent))) fail(400, '不能删除 Agent 状态');
           if (patch.agent && Object.hasOwn(patch.agent, 'handled')) fail(400, '请用 ack 确认已处理事件');
-          const next = applyPatch(r.state, patch, now()); validateState(next); validateAxesChange(r.state, next);
+          const next = applyPatch(r.state, patch, now()); validateState(next); validateAxesChange(r.state, next); prepareCodeReviews(next, r.state);
           if (r.state.finished && !next.finished) fail(409, '已完成请求不能重新激活，请创建新请求');
           const added = next.questions.some((q) => !r.state.questions.some((old) => old.id === q.id));
           const reopened = Array.isArray(patch.questions) && patch.questions.some((q) => ['open', 'reopened'].includes(q.status) && r.state.questions.some((old) => old.id === q.id && !['open','reopened'].includes(old.status)));
@@ -276,9 +278,15 @@ export function createHandoverServer(options = {}) {
           atomic(store.dir('visuals', `${r.id}.json`), { html: data.html }); return json(res, 200, { ok: true });
         }
       }
-      const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback|cancel)?$/);
+      const grill = p.match(/^\/grill\/([A-Za-z0-9_-]{8,100})\/(state|listener|send|theme|visual|content|bridge|feedback|cancel|review-preview)?$/);
       if (grill) {
         let r = store.get(grill[1]); requireRequestUser(req, r);
+        if (req.method === 'GET' && grill[2] === 'review-preview') {
+          const review = r.state.questions.find(question => question.id === u.searchParams.get('q'))?.codeReview;
+          if (!review?.expected) fail(404, '此项修改没有效果预览');
+          if (u.searchParams.get('digest') !== review.digest) fail(409, '修改方案已更新，请刷新预览');
+          return bytes(res, 200, review.expected.html, 'text/html; charset=utf-8', {'Content-Security-Policy':codePreviewCsp});
+        }
         if (req.method === 'GET' && !grill[2]) return bytes(res, 200, r.page ? shellHtml(fs.readFileSync(path.join(ROOT, 'web/custom.html'), 'utf8').replace('__REQUEST_ID__', r.id), basePath) : page(r, basePath), 'text/html; charset=utf-8', { 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'" });
         if (req.method === 'GET' && grill[2] === 'bridge') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, { ...publicRequest(r), maxFeedbackBytes: customLimits.maxFeedbackBytes }); }
         if (req.method === 'GET' && grill[2] === 'feedback') { if (!r.page) fail(404, '此请求没有自定义页面'); return json(res, 200, {requestId:r.id, lastFeedback:savedFeedback(r), handled:r.state.agent.handled || 0}); }
@@ -322,6 +330,8 @@ export function createHandoverServer(options = {}) {
       }
       const staticFiles = { '/custom.js': ['custom.js', 'text/javascript; charset=utf-8'], '/custom.css': ['custom.css', 'text/css'], '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/navigation.js': ['navigation.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css'], '/grill.css': ['grill.css', 'text/css'], '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'], '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/icons/icon-192.png': ['icons/icon-192.png', 'image/png'], '/icons/icon-512.png': ['icons/icon-512.png', 'image/png'], '/icons/icon.svg': ['icons/icon.svg', 'image/svg+xml'] };
       staticFiles['/paths.js'] = ['paths.js', 'text/javascript; charset=utf-8'];
+      staticFiles['/fonts/JetBrainsMono-Regular.ttf'] = ['fonts/JetBrainsMono-Regular.ttf', 'font/ttf'];
+      staticFiles['/fonts/OFL.txt'] = ['fonts/OFL.txt', 'text/plain; charset=utf-8'];
       if (['GET', 'HEAD'].includes(req.method) && Object.hasOwn(staticFiles, p)) {
         const [file, type] = staticFiles[p]; let content = req.method === 'HEAD' ? '' : fs.readFileSync(path.join(ROOT, 'web', file));
         if (req.method !== 'HEAD' && p === '/') content = shellHtml(content.toString(), basePath);

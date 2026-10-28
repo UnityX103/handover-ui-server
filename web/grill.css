@@ -62,3 +62,77 @@ footer #handover-cancel{flex:0 0 100%;grid-column:1/-1;order:10;width:100%;min-h
 header #intent{display:none!important}
 #main .handover-request-context{display:block;max-width:680px;margin:0 0 32px;padding:4px 0 20px;font:500 var(--handover-font)/1.8 var(--sans);color:var(--ink);white-space:pre-wrap;overflow:visible;overflow-wrap:anywhere;text-overflow:clip;max-height:none}
 @media(max-width:640px){#main .handover-request-context{max-width:none;margin-bottom:28px;padding:4px 0 16px;font-size:calc(var(--handover-font) * .9);line-height:1.8}}
+
+/* Keep the question's explanation as readable as its answer options. */
+#main .card .body {
+    max-width: none;
+    font-size: calc(var(--handover-font) + 2px);
+    font-weight: 500;
+    line-height: 1.9;
+    letter-spacing: .035em;
+    color: var(--ink);
+    margin: 0 0 8px;
+}
+#main .card.picked .body{opacity:1}
+#main .why{font-size:var(--handover-font);line-height:1.85;letter-spacing:.025em}
+
+/* Short navigation labels keep long questions from stretching the sidebar. */
+#nav .round,#nav .item .mark.open{display:none}
+@media(min-width:641px){
+  #nav .nav-items{display:block;padding-top:12px}
+  #nav .item{grid-template-columns:28px minmax(0,1fr) auto;align-items:center;min-height:52px;gap:8px;padding:10px 16px}
+  #nav .item .t{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px;line-height:1.7}
+  #nav .item .sword{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+
+/* Read one conclusion at a time; details and the user's own words stay available. */
+#aside{min-width:0}
+#aside .head h3{font-size:16px;line-height:1.6;letter-spacing:.04em}
+#aside .head .sub{font-size:var(--handover-font);font-weight:500;line-height:1.8;letter-spacing:.025em;overflow-wrap:anywhere}
+#aside .head .count{display:block;margin:6px 0 0;font-size:14px;line-height:1.6}
+#aside .msg{padding-top:20px;padding-bottom:20px}
+#aside .msg .who{font-size:14px;line-height:1.6;margin-bottom:12px;letter-spacing:.025em}
+#aside .msg .text,#aside .empty-thread,#aside textarea{font-size:var(--handover-font);font-weight:500;line-height:1.9;letter-spacing:.035em;color:var(--ink);overflow-wrap:anywhere}
+#aside textarea{min-height:130px;padding:14px 16px}
+#aside .handover-discussion{min-width:0}
+#aside .handover-discussion summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px;min-height:44px;padding:12px;border:1px solid var(--rule);border-radius:10px;cursor:pointer;list-style:none;font-size:var(--handover-font);font-weight:600;line-height:1.85;letter-spacing:.035em;color:var(--ink);overflow-wrap:anywhere}
+#aside .handover-discussion summary::-webkit-details-marker{display:none}
+#aside .handover-discussion summary::after{content:"展开";padding-top:3px;font-size:15px;font-weight:500;letter-spacing:0;color:var(--accent);white-space:nowrap}
+#aside .handover-discussion[open] summary::after{content:"收起"}
+#aside .handover-discussion summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#aside .handover-discussion .text{margin-top:16px;padding:0 4px;white-space:pre-wrap}
+#aside .handover-discussion-conclusion{font-weight:600}
+@media(max-width:640px){
+  #main .card .body{font-size:var(--handover-font)}
+  #aside textarea{font-size:var(--handover-font)!important}
+}
+
+/* Rider Dark colors and JetBrains Mono, with the page's readable font size. */
+@font-face{font-family:"Handover JetBrains Mono";src:url("fonts/JetBrainsMono-Regular.ttf") format("truetype");font-display:swap;font-weight:400 600}
+.handover-code-review{--code-bg:#191a1c;--code-ink:#d0d0d0;--code-border:#3c3f41;max-width:960px;min-width:0;margin:40px 0 0;padding:24px 0 4px;border-top:2px solid var(--rule);font:500 var(--handover-font)/1.85 var(--sans);letter-spacing:.025em}
+.review-eyebrow{font-size:15px;line-height:1.6;color:var(--ink-2)}
+.review-title{margin:8px 0 20px;font-size:calc(var(--handover-font) + 2px);line-height:1.7;font-weight:600;overflow-wrap:anywhere}
+.review-expected{margin:0 0 24px;border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--bg)}
+.review-expected-summary{padding:12px 16px;font-size:var(--handover-font);line-height:1.8}
+.review-expected-frame{display:block;width:100%;height:300px;min-height:240px;border:0;background:white}
+.review-file{margin:16px 0;border:1px solid var(--code-border);border-radius:10px;overflow:hidden}
+.review-file-summary{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:14px 16px;min-height:48px;cursor:pointer;list-style:none;background:#25262a;color:var(--code-ink)}
+.review-file-summary::-webkit-details-marker{display:none}
+.review-file-summary::before{content:"▸";color:#808080}.review-file[open]>.review-file-summary::before{content:"▾"}
+.review-file-path{min-width:0;font-size:17px;line-height:1.8;font-family:"Handover JetBrains Mono","JetBrains Mono",ui-monospace,monospace;overflow-wrap:anywhere}
+.review-file-location{margin-left:auto;font-size:15px;color:#bdbdbd;white-space:nowrap}
+#main .review-file-reason{padding:14px 16px;margin:0;font-size:var(--handover-font);line-height:1.85}
+.review-before{border-top:1px solid var(--code-border)}
+.review-before>summary{padding:10px 16px;min-height:44px;cursor:pointer;font-size:16px;line-height:1.7}
+.review-after-label{padding:10px 16px;font-size:16px;line-height:1.7;background:#242b24;color:#adeb96;border-top:1px solid var(--code-border)}
+.review-code{max-width:100%;overflow-x:auto;padding:12px 0;background:var(--code-bg);color:var(--code-ink);letter-spacing:0;tab-size:4}
+.review-code-line{display:grid;grid-template-columns:4ch minmax(max-content,1fr);min-height:1.8em;font:400 var(--handover-font)/1.8 "Handover JetBrains Mono","JetBrains Mono",ui-monospace,monospace;border-left:3px solid transparent}
+.review-code-after .review-code-line{border-left-color:#2c4722}.review-code-before .review-code-line{border-left-color:#714642}
+.review-code-number{position:sticky;left:0;padding:0 10px;color:#808080;text-align:right;background:#191a1c;user-select:none}
+#main .review-source{display:block;max-width:none;margin:0;padding:0 16px 0 8px;font:inherit;white-space:pre;color:inherit;background:none;border-radius:0;letter-spacing:0}
+.review-token-keyword,.review-token-property{color:#6c95eb}.review-token-string{color:#c9a26d}.review-token-number{color:#ed94c0}.review-token-comment{color:#85c46c;font-style:italic}.review-token-function{color:#39cc9b}.review-token-type{color:#c191ff}
+.review-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}.review-actions button{min-height:48px;font-size:18px;padding:10px 18px}
+#main .review-decision-note{margin:12px 0 0;font-size:16px;line-height:1.8;color:var(--ink-2)}
+#main .review-error{font-size:var(--handover-font);line-height:1.8;color:var(--accent);padding:12px;border:1px solid currentColor;border-radius:8px}
+.review-code:focus-visible,.review-file summary:focus-visible{outline:2px solid #6c95eb;outline-offset:-2px}
+@media(max-width:640px){.handover-code-review{margin-top:28px;padding-top:20px}.review-actions{display:grid;grid-template-columns:1fr 1fr}.review-actions button{width:100%;padding:10px 8px}.review-file-summary{padding:12px}.review-file-location{margin-left:0}.review-code-line{font-size:var(--handover-font)}.review-expected-frame{height:320px}}
