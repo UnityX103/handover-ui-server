@@ -2,7 +2,22 @@
 
 基于 `jasonku09/grill-with-ui` 扩展的个人远程交接服务。保留 Grill 的问卷、多选、每题讨论、暂缓、重新打开、深入分析与图解协议，增加反馈、求助、多会话隔离、手机桌面安装及 Web Push。
 
-Agent 发起请求，自动打开默认浏览器，并在当前回合分段等待属于自己的真实答复。手机和电脑访问同一服务器；答复被持久保存，Agent 处理后明确确认消费，再继续原会话。手机不主动创建业务请求。
+Agent 发起请求后返回链接，不再自动打开浏览器，并在当前回合分段等待属于自己的真实答复。Mac 可通过独立的“远程交接”App 接收新消息并自动唤起；手机和电脑访问同一服务器，答复归还对应来源会话。手机不主动创建业务请求。
+
+## Mac 本机 App
+
+```sh
+npm run install:app
+open "$HOME/Applications/远程交接.app"
+```
+
+使用系统 Swift、AppKit 和 WKWebView 构建原生 `.app`，无需 Electron 或额外运行依赖。要求 macOS 13+，构建时需安装 Xcode Command Line Tools。默认安装到 `~/Applications/远程交接.app`，并写入本人登录时后台启动的 LaunchAgent；`npm run install:app -- --no-login` 可只安装 App。
+
+App 沿用两份 Skill 的本地服务器与用户名配置；首次在 App 内主动填写用户名登录，之后保留选择。每 5 秒只读检查该用户名的请求，收到新请求或追加/重开的问题时自动唤起 App。首次连接只建立基线，不批量弹出历史请求；提醒版本保存在本机，重启与重复检查不会反复弹出同一消息。配置路径、用户名与服务器路径分别隔离。
+
+关闭窗口后 App 继续在菜单栏接收消息；点 Dock 图标或菜单栏可重开。菜单“新消息自动唤起 App”可关闭唤起；选择“退出远程交接”则停止接收，直到再次启动。新消息不会切走正在填写的题目或覆盖草稿，窗口上方“新消息”可返回收件箱。系统休眠、断网或退出期间不能实时提醒，恢复连接后继续检查。
+
+客户端 `new`、`resume` 不打开网页，也不由 Codex 拉起 App。仅本人明确要求手动打开浏览器时使用 `open` 或 `home`；旧 `--no-open` 参数保持兼容。手机 Web Push 与原有问答、反馈、确认协议继续使用。构建、安装、卸载与验证见 [本机 App 说明](docs/macos-app.md)。
 
 ## 部署配置
 
@@ -49,6 +64,8 @@ npm run install:skills
 ```
 
 安装 `skills/grill-with-ui` 与 `skills/remote-handover` 到用户 Codex Skill 目录。旧版移到 `~/.local/share/handover-ui/skill-backups/<时间>/`，不再被发现为活动 Skill。已有 `grill-with-docs-ui` 会更新为组合调用新的远程入口，保留领域词汇表与 ADR 工作流。
+
+从存在本机修改的仓库安装时，记录 `localBase` 而不冒充已发布版本；远端 `main` 仍为同一基线时保留这份本机安装，避免下次创建请求下载旧行为覆盖本机修复。远端推进到不同提交后仍按原流程检查、备份和更新。
 
 每次使用客户端 `new`、有效 schema 2 的 `resume` 或 `home` 时，先用本机 Git 非交互运行 `git ls-remote https://github.com/UnityX103/handover-ui-server.git refs/heads/main`，读取公开仓库 `main` 的完整 SHA；不需要 `gh`、GitHub 登录或访问 token。有更新就使用 Node.js 内置 `fetch` 从 `raw.githubusercontent.com/UnityX103/handover-ui-server/<完整 SHA>/` 下载清单和 `skills/manifest.json` 列出的文件，始终固定同一个提交，备份并更新两份 Skill 和已有组合入口，再以新版客户端继续原操作；现有凭据、请求 handle 与游标保留。没有更新只发一次版本检查；当前交接的分段等待和答复确认不重复检查。检查或下载失败时保留现有版本并报告；可单独运行 `node cli.mjs update`。隔离测试使用 `HANDOVER_SKIP_UPDATE=1`。本机需安装 Git 与 Node.js 22.11+，能访问 GitHub HTTPS 和 raw.githubusercontent.com；完整下载、路径校验、并发锁、备份与按目录原子重命名切换/失败恢复保持不变。该客户端公开下载流程不改变服务器 Webhook 发布链路或只读部署身份。
 

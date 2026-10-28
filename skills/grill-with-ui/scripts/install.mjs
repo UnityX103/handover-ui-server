@@ -21,9 +21,10 @@ export function validateManifest(manifest) {
   return manifest;
 }
 
-export function installBundle({ manifest, files, version, skillsDir = skillsDirectory(), backupsDir = backupDirectory() }) {
+export function installBundle({ manifest, files, version, localBase = null, skillsDir = skillsDirectory(), backupsDir = backupDirectory() }) {
   validateManifest(manifest);
   if (version !== null && !/^[0-9a-f]{40}$/.test(version)) throw new Error('Skill 版本必须是完整提交 SHA');
+  if (localBase !== null && (version !== null || !/^[0-9a-f]{40}$/.test(localBase))) throw new Error('本机修改基线必须是完整提交 SHA，且不能冒充已发布版本');
   let size = 0;
   for (const file of manifest.files) {
     if (typeof files[file] !== 'string' || Buffer.byteLength(files[file]) > 262144) throw new Error('Skill 文件缺失或过大');
@@ -39,7 +40,7 @@ export function installBundle({ manifest, files, version, skillsDir = skillsDire
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
     fs.writeFileSync(target, files[file], { mode: 0o600, flag: 'wx' });
   }
-  const metadata = { schema: 1, repository, branch, commit: version, installed: new Date().toISOString() };
+  const metadata = { schema: 1, repository, branch, commit: version, ...(localBase ? {localBase} : {}), installed: new Date().toISOString() };
   fs.writeFileSync(path.join(backup, 'grill-with-ui.new/.handover-install.json'), JSON.stringify(metadata, null, 2) + '\n', { mode: 0o600 });
   const composite = path.join(skillsDir, 'grill-with-docs-ui/SKILL.md');
   const compositionUpdated = fs.existsSync(composite);
@@ -69,5 +70,5 @@ export function installBundle({ manifest, files, version, skillsDir = skillsDire
     if (recoveryErrors.length) throw Object.assign(new Error('Skill 更新失败且部分恢复未完成；原文件保留在备份中'), { recoveryNeeded: true, backup });
     throw error;
   }
-  return { ok: true, installed: names.map((name) => path.join(skillsDir, name)), compositionUpdated, backup, version, entrypoint: path.join(skillsDir, 'grill-with-ui/scripts/handover.mjs') };
+  return { ok: true, installed: names.map((name) => path.join(skillsDir, name)), compositionUpdated, backup, version, ...(localBase ? {localBase} : {}), entrypoint: path.join(skillsDir, 'grill-with-ui/scripts/handover.mjs') };
 }

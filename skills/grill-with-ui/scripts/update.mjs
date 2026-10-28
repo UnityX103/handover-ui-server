@@ -39,6 +39,7 @@ export async function updateSkills({ git = publicGit, contents: download = publi
     checked = true;
     const installed = read(path.join(skillsDir, 'grill-with-ui/.handover-install.json'));
     if (installed.repository === repository && installed.branch === branch && installed.commit === version) return { ok: true, checked: true, updated: false, version };
+    if (installed.repository === repository && installed.branch === branch && installed.commit === null && installed.localBase === version) return { ok: true, checked: true, updated: false, version, status: 'local-changes', note: '已安装本机修改，GitHub main 尚未超出安装基线；保留本机版本，不用相同基线覆盖。' };
     fs.mkdirSync(path.dirname(lockFile), { recursive: true, mode: 0o700 });
     const previous = read(lockFile);
     if (previous.recoveryNeeded) return { ok: false, checked: true, updated: false, status: 'recovery-needed', backup: previous.backup, note: '上次更新仍需人工恢复，已停止自动安装；请检查备份与更新锁。' };

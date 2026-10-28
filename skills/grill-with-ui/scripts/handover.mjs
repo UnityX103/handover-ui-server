@@ -90,7 +90,7 @@ export async function main(argv=process.argv.slice(2)) {
   const o=args(argv),command=o._[0]||'help';
   if(command==='config'&&Object.hasOwn(o,'token-stdin'))throw new Error('旧 Agent Token 配置已停用；请使用 config --username Xpy。原配置保持不变。');
   if(command==='resume')handleFor(o); // Retired handles fail before update/network access.
-  if(command==='help') { out({commands:{probe:'probe；探测自定义 HTML / JSON 桥接能力，不创建请求',update:'update；检查 GitHub main 并更新本地两份 Skill',config:'config --server HTTPS_URL [--username Xpy] | config --show',new:'new --kind questionnaire|feedback|help --topic 标题 [--file JSON | --stdin] [--context 内容] [--no-open]',resume:'resume --handle FILE',wait:'wait --handle FILE [--timeout 25] [--after SEQ]；单次最长 30 秒，超时退出码 3',pending:'pending --handle FILE',patch:'patch --handle FILE --file PATCH_JSON | --stdin',ack:'ack --handle FILE --seq N',finish:'finish --handle FILE [--doc PATH]',cancel:'cancel --handle FILE',open:'open --handle FILE | home',state:'state --handle FILE',visual:'visual --handle FILE --file HTML',sessions:'sessions [--source-session ID]'},config:configFile(),state:stateHome()}); return; }
+  if(command==='help') { out({commands:{probe:'probe；探测自定义 HTML / JSON 桥接能力，不创建请求',update:'update；检查 GitHub main 并更新本地两份 Skill',config:'config --server HTTPS_URL [--username Xpy] | config --show',new:'new --kind questionnaire|feedback|help --topic 标题 [--file JSON | --stdin] [--context 内容]；只创建请求，不打开网页',resume:'resume --handle FILE',wait:'wait --handle FILE [--timeout 25] [--after SEQ]；单次最长 30 秒，超时退出码 3',pending:'pending --handle FILE',patch:'patch --handle FILE --file PATCH_JSON | --stdin',ack:'ack --handle FILE --seq N',finish:'finish --handle FILE [--doc PATH]',cancel:'cancel --handle FILE',open:'open --handle FILE | home；仅在本人明确要求打开浏览器时使用',state:'state --handle FILE',visual:'visual --handle FILE --file HTML',sessions:'sessions [--source-session ID]'},config:configFile(),state:stateHome()}); return; }
   if(command==='update') { const result=await updateSkills();out(result);if(!result.ok)process.exitCode=1;return; }
   if(['new','resume','home'].includes(command) && process.env.HANDOVER_SKIP_UPDATE!=='1' && !process.env.HANDOVER_UPDATE_CHECKED) {
     const result=await updateSkills();process.stderr.write(JSON.stringify({event:'skill_update',...result})+'\n');
@@ -126,8 +126,7 @@ export async function main(argv=process.argv.slice(2)) {
     try{
       const result=await request(cfg.serverUrl,'/api/requests',{username:cfg.username,method:'POST',data:payload});
       h.registered=true;atomic(file,h);
-      let opened={opened:false}; if(!o['no-open'])try{opened=await openBrowser(cfg,id);}catch{opened={opened:false,note:'请求已保存，自动打开未完成。可使用 open 重试。'};}
-      out({ok:true,handle:file,requestId:id,source,url:result.url,...opened});
+      out({ok:true,handle:file,requestId:id,source,url:result.url,opened:false});
     }catch(error){out({ok:false,handle:file,requestId:id,error:error.message,recovery:'使用 resume --handle 恢复同一请求，不要重新 new'});process.exitCode=1;}return;
   }
   const {file,h}=handleFor(o);

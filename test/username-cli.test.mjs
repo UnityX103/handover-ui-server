@@ -48,3 +48,22 @@ test('用户名客户端：无全局或每请求 token，全程恢复与配置�
   assert.equal(app.store.list().length, 1);
   assert.equal(JSON.parse(fs.readFileSync(handle, 'utf8')).username, 'Xpy');
 });
+
+test('创建和恢复请求不打开网页；仅显式 open 才调用浏览器', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handover-no-auto-open-'));
+  const app = createHandoverServer({dataDir:path.join(dir,'data'),adminToken:'isolated-no-open-fixture-'.repeat(3),port:0,publicUrl:'http://127.0.0.1:0',disablePush:true});
+  await new Promise(resolve => app.server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{app.server.closeAllConnections();await new Promise(resolve=>app.server.close(resolve));fs.rmSync(dir,{recursive:true,force:true});});
+  const marker=path.join(dir,'browser-calls.jsonl'),preload=path.join(dir,'opener.mjs');
+  fs.writeFileSync(preload, `import child from 'node:child_process'; import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module'; const original=child.execFileSync; child.execFileSync=(program,args,options)=>{if(['/usr/bin/open','rundll32.exe','xdg-open'].includes(program)){fs.appendFileSync(process.env.BROWSER_CALLS,JSON.stringify({program,args})+'\\n');return '';}return original(program,args,options);};syncBuiltinESMExports();`);
+  const env={...process.env,HANDOVER_SERVER_URL:`http://127.0.0.1:${app.server.address().port}`,HANDOVER_USERNAME:'Xpy',HANDOVER_CONFIG:path.join(dir,'config.json'),HANDOVER_STATE_DIR:path.join(dir,'handles'),CODEX_THREAD_ID:'no-open-fixture',HANDOVER_SKIP_UPDATE:'1',NODE_OPTIONS:`--import=${preload}`,BROWSER_CALLS:marker};
+  delete env.HANDOVER_NO_OPEN;
+  const run=async args=>JSON.parse((await exec(process.execPath,[path.resolve('cli.mjs'),...args],{env})).stdout);
+  const created=await run(['new','--kind','help','--topic','隔离验证：不自动弹出网页']);
+  assert.equal(created.opened,false);assert.equal(fs.existsSync(marker),false);
+  assert.equal((await run(['resume','--handle',created.handle])).requestId,created.requestId);
+  assert.equal(fs.existsSync(marker),false);
+  const opened=await run(['open','--handle',created.handle]);assert.equal(opened.opened,true);
+  const calls=fs.readFileSync(marker,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.length,1);assert.deepEqual(calls[0].args,[created.url]);
+});

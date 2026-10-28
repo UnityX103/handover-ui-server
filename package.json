@@ -12,7 +12,10 @@
     "test:browser": "node test/remote.e2e.mjs",
     "test:bridge": "node test/custom-page.e2e.mjs",
     "test:sent": "node test/sent-feedback.e2e.mjs",
-    "install:skills": "node scripts/install-skills.mjs"
+    "install:skills": "node scripts/install-skills.mjs",
+    "build:app": "node scripts/build-macos-app.mjs",
+    "install:app": "node scripts/build-macos-app.mjs --install",
+    "test:app": "node scripts/test-macos-app.mjs"
   },
   "dependencies": { "web-push": "3.6.7" }
 }

@@ -36,6 +36,18 @@ test('Skill 已是 GitHub main 最新版时，仅检查一次且不重复安装'
   assert.equal(fs.readFileSync(path.join(f.skillsDir, 'grill-with-ui/SKILL.md'), 'utf8'), files['skills/grill-with-ui/SKILL.md']);
 });
 
+test('本机未发布安装不被相同远端基线覆盖；远端推进后仍正常更新', async t => {
+  const f=fixture(t);
+  installBundle({manifest,files,version:null,localBase:oldVersion,skillsDir:f.skillsDir,backupsDir:f.backupsDir});
+  const local=JSON.parse(fs.readFileSync(path.join(f.skillsDir,'grill-with-ui/.handover-install.json')));
+  assert.equal(local.commit,null);assert.equal(local.localBase,oldVersion);
+  const before=fs.readdirSync(f.backupsDir).length;
+  const unchanged=await updateSkills({...f,git:async()=>oldVersion+'\trefs/heads/main\n',contents:async()=>{throw new Error('不能下载旧基线覆盖本机修改');}});
+  assert.equal(unchanged.status,'local-changes');assert.equal(unchanged.updated,false);assert.equal(fs.readdirSync(f.backupsDir).length,before);
+  const advanced=await updateSkills(f);assert.equal(advanced.updated,true);assert.equal(advanced.version,latestVersion);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.skillsDir,'grill-with-ui/.handover-install.json'))).localBase,undefined);
+});
+
 test('Skill 更新固定到同一提交，备份两份 Skill 并保留凭据和请求状态', async (t) => {
   const f = fixture(t);
   const privateState = path.join(f.dir, 'private-state.json');
